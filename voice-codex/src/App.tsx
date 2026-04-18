@@ -1,9 +1,41 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Activity,
+  Cable,
+  KeyRound,
+  MessageSquare,
+  Mic,
+  MicOff,
+  Play,
+  Radio,
+  RefreshCw,
+  Square,
+  TerminalSquare,
+  WandSparkles,
+} from "lucide-react";
 import { useCodexWebSocket } from "./useCodexWebSocket";
 import { useVoiceSession } from "./useVoiceSession";
 import { useOpenAIRealtime } from "./useOpenAIRealtime";
 import type { LogEntry, AgentEvent, ModelInfo } from "./types";
-import "./App.css";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 const AGENT_METHODS_OF_INTEREST = new Set([
   "turn/started",
@@ -17,134 +49,271 @@ const AGENT_METHODS_OF_INTEREST = new Set([
   "account/updated",
 ]);
 
-function LogPanel({ entries }: { entries: LogEntry[] }) {
-  return (
-    <div style={styles.panel}>
-      <div style={styles.panelHeader}>JSON-RPC Log</div>
-      <div style={styles.scrollArea}>
-        {entries.map((e) => (
-          <div
-            key={e.id}
-            style={{ ...styles.logEntry, borderLeftColor: e.direction === "sent" ? "#4ade80" : "#60a5fa" }}
-          >
-            <span style={styles.logTime}>{e.timestamp}</span>
-            <span style={{ color: e.direction === "sent" ? "#4ade80" : "#60a5fa", marginRight: 6 }}>
-              {e.direction === "sent" ? "▶" : "◀"}
-            </span>
-            <span style={styles.logMethod}>
-              {"method" in e.message ? e.message.method : `id=${(e.message as { id: number }).id}`}
-            </span>
-            <pre style={styles.logBody}>{JSON.stringify(e.message, null, 2)}</pre>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+type RealtimeLog = {
+  id: number;
+  direction: "client" | "server" | "meta";
+  timestamp: string;
+  label: string;
+  body: string;
+};
+
+type RealtimeMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  status: "streaming" | "complete";
+  source: "voice" | "text" | "voice-pending";
+  timestamp: string;
+};
+
+function statusBadgeClass(status: string) {
+  if (status === "connected" || status === "active" || status === "apiKey") {
+    return "border-emerald-400/40 bg-emerald-500/12 text-emerald-200";
+  }
+  if (status === "connecting" || status === "requesting-mic") {
+    return "border-amber-400/40 bg-amber-500/12 text-amber-200";
+  }
+  if (status === "error") {
+    return "border-red-400/40 bg-red-500/12 text-red-200";
+  }
+  return "border-zinc-500/40 bg-zinc-500/10 text-zinc-300";
 }
 
-function RealtimeLogPanel({
-  entries,
-}: {
-  entries: Array<{ id: number; direction: "client" | "server" | "meta"; timestamp: string; label: string; body: string }>;
-}) {
-  return (
-    <div style={styles.panel}>
-      <div style={styles.panelHeader}>OpenAI Realtime Log</div>
-      <div style={styles.scrollArea}>
-        {entries.length === 0 && (
-          <div style={{ color: "#6b7280", padding: "8px 12px", fontSize: 13 }}>No OpenAI Realtime events yet.</div>
-        )}
-        {entries.map((entry) => (
-          <div
-            key={entry.id}
-            style={{
-              ...styles.logEntry,
-              borderLeftColor:
-                entry.direction === "client" ? "#22c55e" : entry.direction === "server" ? "#38bdf8" : "#f59e0b",
-            }}
-          >
-            <span style={styles.logTime}>{entry.timestamp}</span>
-            <span style={styles.logMethod}>{entry.label}</span>
-            <pre style={styles.logBody}>{entry.body}</pre>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+function statusDotClass(status: string) {
+  if (status === "connected" || status === "active" || status === "apiKey") return "bg-emerald-300";
+  if (status === "connecting" || status === "requesting-mic") return "bg-amber-300";
+  if (status === "error") return "bg-red-300";
+  return "bg-zinc-400";
 }
 
-function RealtimeConversationPanel({
-  messages,
+function controlSurfaceClass() {
+  return "bg-zinc-950/75 border-white/10 text-zinc-100 shadow-none";
+}
+
+function eventToneClass(method?: string) {
+  if (!method) return "text-zinc-400";
+  if (method.startsWith("turn/")) return "text-white";
+  if (method.startsWith("item/fileChange")) return "text-zinc-200";
+  if (method.startsWith("item/commandExecution")) return "text-zinc-300";
+  if (method.startsWith("item/agentMessage")) return "text-zinc-100";
+  if (method === "thread/realtime/sdp") return "text-zinc-200";
+  return "text-zinc-400";
+}
+
+function PanelShell({
+  title,
+  description,
+  icon,
+  children,
+  contentClassName,
 }: {
-  messages: Array<{
-    id: string;
-    role: "user" | "assistant";
-    text: string;
-    status: "streaming" | "complete";
-    source: "voice" | "text" | "voice-pending";
-    timestamp: string;
-  }>;
+  title: string;
+  description?: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+  contentClassName?: string;
 }) {
   return (
-    <div style={styles.panel}>
-      <div style={styles.panelHeader}>Realtime Conversation</div>
-      <div style={styles.scrollArea}>
-        {messages.length === 0 && (
-          <div style={{ color: "#6b7280", padding: "8px 12px", fontSize: 13 }}>No conversation messages yet.</div>
-        )}
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            style={{
-              ...styles.messageBubble,
-              marginLeft: message.role === "assistant" ? 8 : 48,
-              marginRight: message.role === "assistant" ? 48 : 8,
-              borderLeftColor: message.role === "assistant" ? "#38bdf8" : "#22c55e",
-            }}
-          >
-            <div style={styles.messageMeta}>
-              <span>{message.role === "assistant" ? "Assistant" : "User"}</span>
-              <span>{message.source}</span>
-              <span>{message.status}</span>
-              <span>{message.timestamp}</span>
+    <Card className="border-white/10 bg-zinc-900/72 shadow-xl shadow-black/20 backdrop-blur-sm">
+      <CardHeader className="space-y-1 pb-3">
+        <div className="flex items-center gap-3">
+          {icon ? (
+            <div className="flex size-7 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-zinc-100">
+              {icon}
             </div>
-            <div style={styles.messageText}>{message.text || "..."}</div>
+          ) : null}
+          <div>
+            <CardTitle className="text-[1.05rem] font-semibold tracking-tight text-zinc-50">{title}</CardTitle>
+            {description ? (
+              <CardDescription className="text-sm leading-5 text-zinc-400">{description}</CardDescription>
+            ) : null}
           </div>
-        ))}
-      </div>
-    </div>
+        </div>
+      </CardHeader>
+      <CardContent className={contentClassName}>{children}</CardContent>
+    </Card>
+  );
+}
+
+function JsonRpcLogPanel({ entries }: { entries: LogEntry[] }) {
+  return (
+    <PanelShell
+      title="JSON-RPC Log"
+      description="Raw Codex app-server request and response traffic."
+      icon={<TerminalSquare className="size-4" />}
+      contentClassName="pt-0"
+    >
+      <ScrollArea className="h-[19rem] pr-3">
+        <div className="space-y-3">
+          {entries.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-sm text-zinc-500">
+              No JSON-RPC traffic yet.
+            </div>
+          ) : (
+            entries.map((entry) => (
+              <div
+                key={entry.id}
+                className="rounded-lg border border-white/10 bg-zinc-950/80 p-3 font-mono text-xs text-zinc-300"
+              >
+                <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+                  <span>{entry.timestamp}</span>
+                  <span className={entry.direction === "sent" ? "text-white" : "text-zinc-300"}>
+                    {entry.direction === "sent" ? "sent" : "received"}
+                  </span>
+                </div>
+                <pre className="overflow-x-auto whitespace-pre-wrap break-all text-[11px] leading-5">
+                  {JSON.stringify(entry.message, null, 2)}
+                </pre>
+              </div>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </PanelShell>
+  );
+}
+
+function RealtimeLogPanel({ entries }: { entries: RealtimeLog[] }) {
+  return (
+    <PanelShell
+      title="OpenAI Realtime Log"
+      description="Realtime events from the direct voice session."
+      icon={<Radio className="size-4" />}
+      contentClassName="pt-0"
+    >
+      <ScrollArea className="h-[19rem] pr-3">
+        <div className="space-y-3">
+          {entries.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-sm text-zinc-500">
+              No OpenAI Realtime events yet.
+            </div>
+          ) : (
+            entries.map((entry) => (
+              <div
+                key={entry.id}
+                className="rounded-lg border border-white/10 bg-zinc-950/80 p-3 font-mono text-xs text-zinc-300"
+              >
+                <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+                  <span>{entry.timestamp}</span>
+                  <span
+                    className={
+                      entry.direction === "client"
+                        ? "text-white"
+                        : entry.direction === "server"
+                          ? "text-zinc-300"
+                          : "text-zinc-500"
+                    }
+                  >
+                    {entry.label}
+                  </span>
+                </div>
+                <pre className="overflow-x-auto whitespace-pre-wrap break-all text-[11px] leading-5">
+                  {entry.body}
+                </pre>
+              </div>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </PanelShell>
   );
 }
 
 function EventPanel({ events }: { events: AgentEvent[] }) {
-  const filtered = events.filter((e) => e.method && AGENT_METHODS_OF_INTEREST.has(e.method));
+  const filtered = events.filter((event) => event.method && AGENT_METHODS_OF_INTEREST.has(event.method));
 
   return (
-    <div style={styles.panel}>
-      <div style={styles.panelHeader}>Agent Activity</div>
-      <div style={styles.scrollArea}>
-        {filtered.length === 0 && (
-          <div style={{ color: "#6b7280", padding: "8px 12px", fontSize: 13 }}>No agent events yet.</div>
-        )}
-        {filtered.map((e) => (
-          <div key={e.id} style={styles.eventEntry}>
-            <span style={styles.logTime}>{e.timestamp}</span>
-            <span style={eventMethodColor(e.method ?? "")}>{e.method}</span>
-            <div style={{ color: "#d1d5db", fontSize: 12, marginTop: 2, paddingLeft: 4 }}>{e.summary}</div>
-          </div>
-        ))}
-      </div>
-    </div>
+    <PanelShell
+      title="Agent Activity"
+      description="High-signal Codex thread and item notifications."
+      icon={<Activity className="size-4" />}
+      contentClassName="pt-0"
+    >
+      <ScrollArea className="h-[19rem] pr-3">
+        <div className="space-y-3">
+          {filtered.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-sm text-zinc-500">
+              No agent events yet.
+            </div>
+          ) : (
+            filtered.map((event) => (
+              <div key={event.id} className="rounded-lg border border-white/10 bg-zinc-950/80 p-3">
+                <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+                  <span>{event.timestamp}</span>
+                  <span className={eventToneClass(event.method)}>{event.method}</span>
+                </div>
+                <p className="text-sm leading-6 text-zinc-300">{event.summary}</p>
+              </div>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </PanelShell>
   );
 }
 
-function eventMethodColor(method: string): React.CSSProperties {
-  if (method.startsWith("turn/")) return { color: "#f59e0b", fontWeight: 600, fontSize: 12 };
-  if (method.startsWith("item/fileChange")) return { color: "#a78bfa", fontWeight: 600, fontSize: 12 };
-  if (method.startsWith("item/commandExecution")) return { color: "#f87171", fontWeight: 600, fontSize: 12 };
-  if (method.startsWith("item/agentMessage")) return { color: "#34d399", fontWeight: 600, fontSize: 12 };
-  if (method === "thread/realtime/sdp") return { color: "#38bdf8", fontWeight: 600, fontSize: 12 };
-  return { color: "#9ca3af", fontWeight: 600, fontSize: 12 };
+function ConversationPanel({ messages }: { messages: RealtimeMessage[] }) {
+  return (
+    <PanelShell
+      title="Realtime Conversation"
+      description="Voice and text messages flowing through OpenAI Realtime."
+      icon={<MessageSquare className="size-4" />}
+      contentClassName="pt-0"
+    >
+      <ScrollArea className="h-[26rem] pr-3">
+        <div className="space-y-1.5">
+          {messages.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-sm text-zinc-500">
+              No conversation messages yet.
+            </div>
+          ) : (
+            messages.map((message) => (
+              <div
+                key={message.id}
+                className={`grid gap-2 border-b border-white/6 py-2 ${
+                  message.role === "assistant" ? "grid-cols-[72px_minmax(0,1fr)]" : "grid-cols-[minmax(0,1fr)_72px]"
+                }`}
+              >
+                {message.role === "assistant" ? (
+                  <>
+                    <div className="pt-0.5 text-right text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                      <div className="text-zinc-300">Assistant</div>
+                      <div>{message.source}</div>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-zinc-600">
+                        <span>{message.status}</span>
+                        <span>{message.timestamp}</span>
+                      </div>
+                      <div className="whitespace-pre-wrap text-[13px] leading-5 text-zinc-100">
+                        {message.text || "..."}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="min-w-0 text-right">
+                      <div className="mb-1 flex justify-end gap-2 text-[10px] uppercase tracking-[0.16em] text-zinc-600">
+                        <span>{message.timestamp}</span>
+                        <span>{message.status}</span>
+                      </div>
+                      <div className="whitespace-pre-wrap text-[13px] leading-5 text-zinc-100">
+                        {message.text || "..."}
+                      </div>
+                    </div>
+                    <div className="pt-0.5 text-left text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                      <div className="text-zinc-300">User</div>
+                      <div>{message.source}</div>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </PanelShell>
+  );
 }
 
 function pickDefaultModel(models: ModelInfo[]) {
@@ -152,19 +321,22 @@ function pickDefaultModel(models: ModelInfo[]) {
   return realtimeCandidate?.id ?? models[0]?.id ?? "codex-mini-latest";
 }
 
+function voiceStatusColor(status: string) {
+  if (status === "active") return "text-white";
+  if (status === "error") return "text-red-300";
+  if (status === "connecting" || status === "requesting-mic") return "text-zinc-200";
+  return "text-zinc-400";
+}
+
 export default function App() {
-  const [wsUrl, setWsUrl] = useState(`ws://localhost:3001?target=ws://127.0.0.1:3000`);
+  const [wsUrl, setWsUrl] = useState("ws://localhost:3001?target=ws://127.0.0.1:3000");
   const [cwd, setCwd] = useState("/tmp");
   const [selectedModel, setSelectedModel] = useState("codex-mini-latest");
-  const [realtimeModel, setRealtimeModel] = useState("gpt-realtime");
-  const [realtimeVoice, setRealtimeVoice] = useState("marin");
-  const [realtimeInstructions, setRealtimeInstructions] = useState(
-    "You are a helpful voice coding assistant. Speak only in English unless the user explicitly asks for another language. Keep answers concise and wait until the user finishes speaking before replying.",
-  );
   const [realtimeText, setRealtimeText] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
+
   const {
     status,
     log,
@@ -181,6 +353,7 @@ export default function App() {
     loginWithApiKey,
     logout,
   } = useCodexWebSocket();
+
   const {
     status: realtimeStatus,
     error: realtimeError,
@@ -194,6 +367,8 @@ export default function App() {
   } = useOpenAIRealtime();
 
   const sdpHandlerRef = useRef<((sdp: string) => void) | null>(null);
+  const prevEventCount = useRef(0);
+  const [threadError, setThreadError] = useState<string | null>(null);
 
   const onSdpNotification = useCallback((handler: (sdp: string) => void) => {
     sdpHandlerRef.current = handler;
@@ -202,8 +377,6 @@ export default function App() {
     };
   }, []);
 
-  // Fire SDP handler when we receive thread/realtime/sdp notifications
-  const prevEventCount = useRef(0);
   if (agentEvents.length !== prevEventCount.current) {
     prevEventCount.current = agentEvents.length;
     const last = agentEvents[agentEvents.length - 1];
@@ -218,8 +391,6 @@ export default function App() {
     threadId: thread?.id ?? "",
     onSdpNotification,
   });
-
-  const [threadError, setThreadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (models.length === 0) return;
@@ -240,8 +411,8 @@ export default function App() {
     setAuthError(null);
     try {
       await loginWithApiKey(trimmed);
-    } catch (e) {
-      setAuthError((e as Error).message);
+    } catch (error) {
+      setAuthError((error as Error).message);
     } finally {
       setAuthBusy(false);
     }
@@ -252,8 +423,8 @@ export default function App() {
     setAuthError(null);
     try {
       await logout();
-    } catch (e) {
-      setAuthError((e as Error).message);
+    } catch (error) {
+      setAuthError((error as Error).message);
     } finally {
       setAuthBusy(false);
     }
@@ -263,16 +434,17 @@ export default function App() {
     setThreadError(null);
     try {
       await startThread(cwd, selectedModel);
-    } catch (e) {
-      setThreadError((e as Error).message);
+    } catch (error) {
+      setThreadError((error as Error).message);
     }
   };
 
   const handleStartRealtime = async () => {
     await connectRealtime({
-      model: realtimeModel,
-      voice: realtimeVoice,
-      instructions: realtimeInstructions,
+      model: "gpt-realtime",
+      voice: "marin",
+      instructions:
+        "You are a helpful voice coding assistant. Speak only in English unless the user explicitly asks for another language. Keep answers concise and wait until the user finishes speaking before replying.",
     });
   };
 
@@ -282,464 +454,310 @@ export default function App() {
     try {
       sendRealtimeText(text);
       setRealtimeText("");
-    } catch (e) {
-      console.error(e);
+    } catch (error) {
+      console.error(error);
     }
   };
 
-  const statusDot = { disconnected: "#6b7280", connecting: "#f59e0b", connected: "#4ade80", error: "#f87171" }[status];
-  const realtimeStatusDot = voiceStatusColor(realtimeStatus);
-
   return (
-    <div style={styles.root}>
-      <div style={styles.header}>
-        <h1 style={styles.title}>Voice Codex</h1>
-        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span
-            style={{ width: 10, height: 10, borderRadius: "50%", background: statusDot, display: "inline-block" }}
-          />
-          <span style={{ color: "#9ca3af", fontSize: 13 }}>{status}</span>
-        </span>
-      </div>
-
-      <div style={styles.controls}>
-        <div style={styles.sectionCard}>
-          <div style={styles.sectionHeader}>
-            <div>
-              <div style={styles.sectionTitle}>OpenAI Realtime</div>
-              <div style={styles.helpText}>
-                Direct voice-to-voice lane over OpenAI Realtime API. This keeps the Codex app-server path intact for later.
+    <div className="dark min-h-screen bg-transparent text-zinc-50">
+      <div className="mx-auto flex max-w-[1500px] flex-col gap-4 px-3 py-3 sm:px-5 lg:px-6">
+        <Card className="overflow-hidden border-white/10 bg-zinc-900/72 shadow-xl shadow-black/20">
+          <CardContent className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-3xl space-y-3">
+              <Badge variant="outline" className="border-white/12 bg-white/[0.04] text-zinc-300">
+                Shack15 Hackathon Build
+              </Badge>
+              <div className="space-y-1.5">
+                <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl lg:text-[2.35rem]">
+                  Voice Codex
+                </h1>
+                <p className="max-w-2xl text-sm leading-6 text-zinc-400">
+                  A dark realtime control room for OpenAI voice sessions and local Codex threads. The voice lane is live today,
+                  and the Codex lane stays intact for the next step: wiring spoken intent into local coding workflows.
+                </p>
               </div>
             </div>
-            <span style={{ ...styles.accountBadge, borderColor: realtimeStatusDot, color: "#e2e8f0" }}>
-              Realtime: <strong style={{ color: realtimeStatusDot }}>{realtimeStatus}</strong>
-            </span>
-          </div>
 
-          <div style={styles.row}>
-            <select style={styles.input} value={realtimeModel} onChange={(e) => setRealtimeModel(e.target.value)}>
-              <option value="gpt-realtime">gpt-realtime</option>
-              <option value="gpt-realtime-mini">gpt-realtime-mini</option>
-              <option value="gpt-realtime-1.5">gpt-realtime-1.5</option>
-              <option value="gpt-4o-realtime-preview">gpt-4o-realtime-preview</option>
-            </select>
-            <select style={styles.input} value={realtimeVoice} onChange={(e) => setRealtimeVoice(e.target.value)}>
-              <option value="alloy">alloy</option>
-              <option value="ash">ash</option>
-              <option value="ballad">ballad</option>
-              <option value="coral">coral</option>
-              <option value="echo">echo</option>
-              <option value="marin">marin</option>
-              <option value="sage">sage</option>
-              <option value="shimmer">shimmer</option>
-              <option value="verse">verse</option>
-            </select>
-            {realtimeStatus === "active" || realtimeStatus === "connecting" || realtimeStatus === "requesting-mic" ? (
-              <>
-                <button
-                  style={{ ...styles.btn, background: isMicMuted ? "#b45309" : "#475569" }}
-                  onClick={toggleMicMuted}
-                  disabled={realtimeStatus !== "active"}
-                >
-                  {isMicMuted ? "Unmute Mic" : "Mute Mic"}
-                </button>
-                <button style={{ ...styles.btn, background: "#7f1d1d" }} onClick={() => disconnectRealtime()}>
-                  Stop Realtime
-                </button>
-              </>
-            ) : (
-              <button style={styles.btn} onClick={() => void handleStartRealtime()}>
-                Start Realtime Voice
-              </button>
-            )}
-          </div>
+            <div className="grid w-full max-w-md gap-2 sm:grid-cols-3 lg:pt-1">
+              <div className="rounded-lg border border-white/12 bg-white/[0.04] p-3">
+                <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-zinc-300">Codex WS</div>
+                <Badge className={`gap-2 ${statusBadgeClass(status)}`}>
+                  <span className={`size-1.5 rounded-full ${statusDotClass(status)}`} />
+                  {status}
+                </Badge>
+              </div>
+              <div className="rounded-lg border border-white/12 bg-white/[0.04] p-3">
+                <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-zinc-300">Realtime</div>
+                <Badge className={`gap-2 ${statusBadgeClass(realtimeStatus)}`}>
+                  <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
+                  {realtimeStatus}
+                </Badge>
+              </div>
+              <div className="rounded-lg border border-white/12 bg-white/[0.04] p-3">
+                <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-zinc-300">Auth</div>
+                <Badge className={`gap-2 ${statusBadgeClass(account?.type ?? "unknown")}`}>
+                  <span className={`size-1.5 rounded-full ${statusDotClass(account?.type ?? "unknown")}`} />
+                  {account?.type ?? "unknown"}
+                </Badge>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
-          <textarea
-            style={styles.textarea}
-            value={realtimeInstructions}
-            onChange={(e) => setRealtimeInstructions(e.target.value)}
-            placeholder="Realtime instructions"
-          />
-
-          <div style={styles.row}>
-            <input
-              style={styles.input}
-              value={realtimeText}
-              onChange={(e) => setRealtimeText(e.target.value)}
-              placeholder="Optional: send text to the realtime session"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  handleSendRealtimeText();
-                }
-              }}
-            />
-            <button
-              style={{ ...styles.btn, background: "#475569" }}
-              onClick={handleSendRealtimeText}
-              disabled={realtimeStatus !== "active"}
+        <div className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <PanelShell
+              title="OpenAI Realtime"
+              description="Direct voice lane over the OpenAI Realtime API."
+              icon={<WandSparkles className="size-4" />}
+              contentClassName="space-y-4"
             >
-              Send Text
-            </button>
-          </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge className={`gap-2 ${statusBadgeClass(realtimeStatus)}`}>
+                  <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
+                  Realtime: {realtimeStatus}
+                </Badge>
+                <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
+                  {isMicMuted ? "Mic muted" : "Mic live"}
+                </Badge>
+                <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
+                  gpt-realtime
+                </Badge>
+                <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
+                  marin
+                </Badge>
+              </div>
 
-          <div style={styles.helpText}>
-            Requires <code>OPENAI_API_KEY</code> in the shell that started <code>pnpm dev</code>. The browser sends SDP to a
-            local Vite endpoint, and that endpoint creates the OpenAI Realtime call using your server-side key.
-          </div>
-          <div style={styles.helpText}>
-            You can mute the mic after the session starts and keep using <code>Send Text</code> without room noise
-            triggering turns.
-          </div>
-
-          {realtimeError && <div style={styles.errorMsg}>{realtimeError}</div>}
-        </div>
-
-        <div style={styles.sectionCard}>
-          <div style={styles.sectionHeader}>
-            <div>
-              <div style={styles.sectionTitle}>Codex App Server</div>
-              <div style={styles.helpText}>Preserved for local Codex threads, activity logs, and later hookup from voice to coding.</div>
-            </div>
-          </div>
-
-        <div style={styles.row}>
-          <input
-            style={styles.input}
-            value={wsUrl}
-            onChange={(e) => setWsUrl(e.target.value)}
-            placeholder="ws://localhost:3000"
-          />
-          {status === "disconnected" || status === "error" ? (
-            <button style={styles.btn} onClick={handleConnect}>
-              Connect
-            </button>
-          ) : (
-            <button style={{ ...styles.btn, background: "#374151" }} onClick={disconnect}>
-              Disconnect
-            </button>
-          )}
-        </div>
-
-        {status === "connected" && (
-          <>
-            <div style={styles.accountRow}>
-              <span style={styles.accountBadge}>
-                Auth: <strong>{account?.type ?? "unknown"}</strong>
-              </span>
-              {account?.email && <span style={styles.accountMeta}>{account.email}</span>}
-              {account?.orgName && <span style={styles.accountMeta}>{account.orgName}</span>}
-              <button style={{ ...styles.btn, background: "#475569" }} onClick={() => void readAccount()}>
-                Refresh Account
-              </button>
-              <button style={{ ...styles.btn, background: "#7f1d1d" }} onClick={() => void handleLogout()} disabled={authBusy}>
-                Logout
-              </button>
-            </div>
-            <div style={styles.row}>
-              <input
-                style={styles.input}
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="OpenAI API key for account/login/start"
-              />
-              <button style={styles.btn} onClick={() => void handleApiKeyLogin()} disabled={authBusy}>
-                {authBusy ? "Working..." : "Use API Key"}
-              </button>
-            </div>
-            <div style={styles.helpText}>
-              This logs the current app-server session into API-key mode via <code>account/login/start</code>.
-            </div>
-          </>
-        )}
-
-        {status === "connected" && !thread && (
-          <>
-            <div style={styles.row}>
-              <select style={styles.input} value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
-                {models.length === 0 ? (
-                  <option value={selectedModel}>{selectedModel}</option>
+              <div className="flex flex-wrap gap-2">
+                {realtimeStatus === "active" || realtimeStatus === "connecting" || realtimeStatus === "requesting-mic" ? (
+                  <>
+                    <Button className="bg-zinc-100 text-zinc-950 hover:bg-white" onClick={toggleMicMuted} disabled={realtimeStatus !== "active"}>
+                      {isMicMuted ? <Mic className="size-4" /> : <MicOff className="size-4" />}
+                      {isMicMuted ? "Unmute Mic" : "Mute Mic"}
+                    </Button>
+                    <Button variant="destructive" className="border-red-500/25 bg-red-500/12 text-red-100 hover:bg-red-500/18" onClick={() => disconnectRealtime()}>
+                      <Square className="size-4" />
+                      Stop Realtime
+                    </Button>
+                  </>
                 ) : (
-                  models.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.id}
-                    </option>
-                  ))
+                  <Button className="bg-zinc-100 text-zinc-950 hover:bg-white" onClick={() => void handleStartRealtime()}>
+                    <Play className="size-4" />
+                    Start Realtime Voice
+                  </Button>
                 )}
-              </select>
-              <button style={{ ...styles.btn, background: "#475569" }} onClick={() => void listModels()}>
-                Refresh Models
-              </button>
-            </div>
-            <div style={styles.helpText}>
-              {models.some((model) => model.id.toLowerCase().includes("realtime"))
-                ? "A realtime-looking model was found. If voice still fails, start a new thread with a different model."
-                : "No obvious realtime model was listed by app-server. Voice may stay unavailable on the current Codex install."}
-            </div>
-            <div style={styles.row}>
-              <input
-                style={styles.input}
-                value={cwd}
-                onChange={(e) => setCwd(e.target.value)}
-                placeholder="Working directory (cwd)"
-              />
-              <button style={styles.btn} onClick={handleStartThread}>
-                Start Thread
-              </button>
-            </div>
-          </>
-        )}
+              </div>
 
-        {authError && <div style={styles.errorMsg}>{authError}</div>}
-        {threadError && <div style={styles.errorMsg}>{threadError}</div>}
+              <div className="flex flex-col gap-3">
+                <Input
+                  value={realtimeText}
+                  onChange={(event) => setRealtimeText(event.target.value)}
+                  className={controlSurfaceClass()}
+                  placeholder="Send text into the realtime session"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleSendRealtimeText();
+                    }
+                  }}
+                />
+                <Button variant="outline" className="border-white/12 bg-zinc-950/55 text-zinc-100 hover:bg-zinc-900" onClick={handleSendRealtimeText} disabled={realtimeStatus !== "active"}>
+                  <MessageSquare className="size-4" />
+                  Send Text
+                </Button>
+              </div>
 
-        {thread && (
-          <div style={styles.threadInfo}>
-            <span style={{ color: "#9ca3af", fontSize: 12 }}>Thread: </span>
-            <span style={{ color: "#60a5fa", fontSize: 12, fontFamily: "monospace" }}>{thread.id}</span>
-            <span style={{ color: "#9ca3af", fontSize: 12, marginLeft: 12 }}>Voice: </span>
-            <span style={{ color: voiceStatusColor(voiceStatus), fontSize: 12 }}>{voiceStatus}</span>
-            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-              {voiceStatus === "idle" || voiceStatus === "error" ? (
-                <button style={styles.btnVoice} onClick={startVoice}>
-                  🎙 Start Voice Session
-                </button>
-              ) : (
-                <button style={{ ...styles.btnVoice, background: "#7f1d1d" }} onClick={stopVoice}>
-                  ⏹ Stop Voice
-                </button>
-              )}
-            </div>
+              {realtimeError ? (
+                <div className="rounded-2xl border border-red-500/20 bg-red-950/30 px-4 py-3 text-sm text-red-200">
+                  {realtimeError}
+                </div>
+              ) : null}
+            </PanelShell>
+
+            <PanelShell
+              title="Codex App Server"
+              description="Preserved local Codex control path for threads, auth, and later voice-to-code orchestration."
+              icon={<Cable className="size-4" />}
+              contentClassName="space-y-4"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge className={`gap-2 ${statusBadgeClass(status)}`}>
+                  <span className={`size-1.5 rounded-full ${statusDotClass(status)}`} />
+                  Codex: {status}
+                </Badge>
+                {account?.type ? <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-200">Auth: {account.type}</Badge> : null}
+              </div>
+
+              <div className="flex flex-col gap-3">
+                <Input
+                  value={wsUrl}
+                  onChange={(event) => setWsUrl(event.target.value)}
+                  className={`${controlSurfaceClass()} font-mono`}
+                  placeholder="ws://localhost:3001?target=ws://127.0.0.1:3000"
+                />
+                {status === "disconnected" || status === "error" ? (
+                  <Button className="bg-zinc-100 text-zinc-950 hover:bg-white" onClick={handleConnect}>
+                    <Cable className="size-4" />
+                    Connect
+                  </Button>
+                ) : (
+                  <Button variant="outline" className="border-white/12 bg-zinc-950/55 text-zinc-100 hover:bg-zinc-900" onClick={disconnect}>
+                    <Square className="size-4" />
+                    Disconnect
+                  </Button>
+                )}
+              </div>
+
+              {status === "connected" ? (
+                <>
+                  <Separator className="bg-white/10" />
+
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-200">
+                        Auth: {account?.type ?? "unknown"}
+                      </Badge>
+                      {account?.email ? (
+                        <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
+                          {account.email}
+                        </Badge>
+                      ) : null}
+                      {account?.orgName ? (
+                        <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
+                          {account.orgName}
+                        </Badge>
+                      ) : null}
+                    </div>
+
+                    <div className="grid gap-3">
+                      <Input
+                        type="password"
+                        value={apiKey}
+                        onChange={(event) => setApiKey(event.target.value)}
+                        className={controlSurfaceClass()}
+                        placeholder="OpenAI API key for account/login/start"
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <Button className="bg-white text-black hover:bg-zinc-200" onClick={() => void handleApiKeyLogin()} disabled={authBusy}>
+                          <KeyRound className="size-4" />
+                          {authBusy ? "Working..." : "Use API Key"}
+                        </Button>
+                        <Button variant="outline" className="border-white/20 bg-zinc-900 text-zinc-100 hover:bg-zinc-800" onClick={() => void readAccount()}>
+                          <RefreshCw className="size-4" />
+                          Refresh Account
+                        </Button>
+                        <Button variant="destructive" onClick={() => void handleLogout()} disabled={authBusy}>
+                          Logout
+                        </Button>
+                      </div>
+                    </div>
+
+                    <p className="text-sm leading-7 text-zinc-400">
+                      This logs the current app-server session into API-key mode through{" "}
+                      <code className="text-zinc-200">account/login/start</code>.
+                    </p>
+                  </div>
+
+                  <Separator className="bg-white/10" />
+
+                  {!thread ? (
+                    <div className="space-y-4">
+                      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                        <Select value={selectedModel} onValueChange={setSelectedModel}>
+                          <SelectTrigger className={`w-full ${controlSurfaceClass()}`}>
+                            <SelectValue placeholder="Codex model" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(models.length === 0 ? [{ id: selectedModel }] : models).map((model) => (
+                              <SelectItem key={model.id} value={model.id}>
+                                {model.id}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button variant="outline" className="border-white/20 bg-zinc-900 text-zinc-100 hover:bg-zinc-800" onClick={() => void listModels()}>
+                          <RefreshCw className="size-4" />
+                          Refresh
+                        </Button>
+                      </div>
+
+                      <p className="text-sm leading-7 text-zinc-400">
+                        {models.some((model) => model.id.toLowerCase().includes("realtime"))
+                          ? "A realtime-looking model was found. If Codex voice still fails, start a new thread with a different model."
+                          : "No obvious realtime model is listed by app-server. That matches the current known limitation in the Codex lane."}
+                      </p>
+
+                      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                        <Input
+                          value={cwd}
+                          onChange={(event) => setCwd(event.target.value)}
+                          className={`${controlSurfaceClass()} font-mono`}
+                          placeholder="Working directory"
+                        />
+                        <Button className="bg-white text-black hover:bg-zinc-200" onClick={handleStartThread}>
+                          <Play className="size-4" />
+                          Start Thread
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="rounded-lg border border-white/10 bg-zinc-950/80 p-3">
+                        <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-zinc-500">Active Thread</div>
+                        <div className="break-all font-mono text-sm text-zinc-100">{thread.id}</div>
+                        <div className="mt-3 flex items-center gap-2 text-sm">
+                          <span className="text-zinc-500">Voice:</span>
+                          <span className={voiceStatusColor(voiceStatus)}>{voiceStatus}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {voiceStatus === "idle" || voiceStatus === "error" ? (
+                          <Button className="bg-white text-black hover:bg-zinc-200" onClick={startVoice}>
+                            <Mic className="size-4" />
+                            Start Codex Voice
+                          </Button>
+                        ) : (
+                          <Button variant="destructive" onClick={stopVoice}>
+                            <Square className="size-4" />
+                            Stop Codex Voice
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : null}
+
+              {authError ? (
+                <div className="rounded-2xl border border-red-500/20 bg-red-950/30 px-4 py-3 text-sm text-red-200">
+                  {authError}
+                </div>
+              ) : null}
+
+              {threadError ? (
+                <div className="rounded-2xl border border-red-500/20 bg-red-950/30 px-4 py-3 text-sm text-red-200">
+                  {threadError}
+                </div>
+              ) : null}
+
+              {voiceError ? (
+                <div className="rounded-2xl border border-red-500/20 bg-red-950/30 px-4 py-3 text-sm text-red-200">
+                  {voiceError}
+                </div>
+              ) : null}
+            </PanelShell>
           </div>
-        )}
 
-        {voiceError && <div style={styles.errorMsg}>{voiceError}</div>}
+          <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+            <ConversationPanel messages={realtimeMessages} />
+            <RealtimeLogPanel entries={realtimeLogs} />
+            <EventPanel events={agentEvents} />
+            <JsonRpcLogPanel entries={log} />
+          </div>
         </div>
-      </div>
-
-      <div style={styles.panels}>
-        <RealtimeConversationPanel messages={realtimeMessages} />
-        <RealtimeLogPanel entries={realtimeLogs} />
-        <EventPanel events={agentEvents} />
-        <LogPanel entries={log} />
       </div>
     </div>
   );
 }
-
-function voiceStatusColor(s: string) {
-  if (s === "active") return "#4ade80";
-  if (s === "error") return "#f87171";
-  if (s === "connecting" || s === "requesting-mic") return "#f59e0b";
-  return "#9ca3af";
-}
-
-const styles: Record<string, React.CSSProperties> = {
-  root: {
-    minHeight: "100vh",
-    background: "#0f172a",
-    color: "#f1f5f9",
-    display: "flex",
-    flexDirection: "column",
-    fontFamily: "'Inter', system-ui, sans-serif",
-    padding: "0 0 24px 0",
-  },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "16px 24px",
-    borderBottom: "1px solid #1e293b",
-  },
-  title: { margin: 0, fontSize: 20, fontWeight: 700, color: "#f1f5f9" },
-  controls: {
-    padding: "16px 24px",
-    display: "flex",
-    flexDirection: "column",
-    gap: 16,
-    borderBottom: "1px solid #1e293b",
-  },
-  sectionCard: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
-    background: "#111827",
-    border: "1px solid #1f2937",
-    borderRadius: 10,
-    padding: 14,
-  },
-  sectionHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 12,
-    flexWrap: "wrap",
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: 700,
-    color: "#f8fafc",
-  },
-  row: { display: "flex", gap: 8, alignItems: "center" },
-  input: {
-    flex: 1,
-    background: "#1e293b",
-    border: "1px solid #334155",
-    borderRadius: 6,
-    color: "#f1f5f9",
-    padding: "7px 12px",
-    fontSize: 13,
-    fontFamily: "monospace",
-    outline: "none",
-  },
-  textarea: {
-    minHeight: 88,
-    resize: "vertical",
-    background: "#1e293b",
-    border: "1px solid #334155",
-    borderRadius: 6,
-    color: "#f1f5f9",
-    padding: "10px 12px",
-    fontSize: 13,
-    fontFamily: "inherit",
-    outline: "none",
-  },
-  btn: {
-    background: "#2563eb",
-    color: "#fff",
-    border: "none",
-    borderRadius: 6,
-    padding: "7px 16px",
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-  },
-  btnVoice: {
-    background: "#059669",
-    color: "#fff",
-    border: "none",
-    borderRadius: 6,
-    padding: "6px 14px",
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  threadInfo: {
-    display: "flex",
-    alignItems: "center",
-    gap: 4,
-    background: "#1e293b",
-    borderRadius: 6,
-    padding: "8px 12px",
-  },
-  panels: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: 16,
-    padding: "16px 24px",
-    flex: 1,
-    minHeight: 0,
-  },
-  panel: {
-    background: "#1e293b",
-    borderRadius: 8,
-    border: "1px solid #334155",
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
-    minHeight: 400,
-    maxHeight: "calc(100vh - 280px)",
-  },
-  panelHeader: {
-    padding: "8px 12px",
-    fontSize: 12,
-    fontWeight: 700,
-    color: "#64748b",
-    textTransform: "uppercase",
-    letterSpacing: "0.05em",
-    borderBottom: "1px solid #334155",
-    background: "#0f172a",
-  },
-  scrollArea: { flex: 1, overflowY: "auto", padding: "4px 0" },
-  logEntry: {
-    borderLeft: "3px solid",
-    margin: "2px 8px",
-    padding: "4px 8px",
-    borderRadius: "0 4px 4px 0",
-    background: "#0f172a",
-  },
-  logTime: { color: "#475569", fontSize: 11, fontFamily: "monospace", marginRight: 6 },
-  logMethod: { color: "#94a3b8", fontSize: 12, fontFamily: "monospace", fontWeight: 600 },
-  logBody: {
-    margin: "2px 0 0 0",
-    fontSize: 11,
-    color: "#64748b",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-all",
-    maxHeight: 120,
-    overflow: "hidden",
-    fontFamily: "monospace",
-  },
-  eventEntry: {
-    margin: "2px 8px",
-    padding: "5px 8px",
-    background: "#0f172a",
-    borderRadius: 4,
-    borderLeft: "3px solid #334155",
-  },
-  errorMsg: {
-    color: "#fca5a5",
-    fontSize: 12,
-    background: "#450a0a",
-    borderRadius: 4,
-    padding: "6px 10px",
-  },
-  helpText: {
-    color: "#94a3b8",
-    fontSize: 12,
-    lineHeight: 1.4,
-  },
-  accountRow: {
-    display: "flex",
-    gap: 8,
-    alignItems: "center",
-    flexWrap: "wrap",
-  },
-  accountBadge: {
-    color: "#e2e8f0",
-    background: "#1e293b",
-    border: "1px solid #334155",
-    borderRadius: 999,
-    padding: "6px 10px",
-    fontSize: 12,
-  },
-  accountMeta: {
-    color: "#94a3b8",
-    fontSize: 12,
-  },
-  messageBubble: {
-    margin: "8px",
-    padding: "10px 12px",
-    background: "#0f172a",
-    borderRadius: 8,
-    borderLeft: "3px solid",
-  },
-  messageMeta: {
-    display: "flex",
-    gap: 8,
-    flexWrap: "wrap",
-    color: "#64748b",
-    fontSize: 11,
-    textTransform: "uppercase",
-    letterSpacing: "0.03em",
-    marginBottom: 6,
-  },
-  messageText: {
-    color: "#e2e8f0",
-    fontSize: 13,
-    lineHeight: 1.5,
-    whiteSpace: "pre-wrap",
-  },
-};

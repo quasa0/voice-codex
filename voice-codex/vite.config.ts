@@ -1,8 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import type { RawData } from 'ws'
 import { WebSocketServer, WebSocket as WsClient } from 'ws'
 import type { Plugin } from 'vite'
+import path from 'node:path'
 
 const PROXY_PORT = 3001
 
@@ -140,5 +142,10 @@ function codexProxyPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), codexProxyPlugin()],
+  plugins: [react(), tailwindcss(), codexProxyPlugin()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
 })

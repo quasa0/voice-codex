@@ -41,7 +41,7 @@ export function useOpenAIRealtime() {
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<OpenAIRealtimeLogEntry[]>([]);
   const [messages, setMessages] = useState<OpenAIRealtimeMessage[]>([]);
-  const [isMicMuted, setIsMicMuted] = useState(false);
+  const [isMicMuted, setIsMicMuted] = useState(true);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -112,7 +112,7 @@ export function useOpenAIRealtime() {
     }
 
     respondedVoiceItemIdsRef.current.clear();
-    setIsMicMuted(false);
+    setIsMicMuted(true);
 
     setStatus(nextStatus);
   }, []);
@@ -134,8 +134,12 @@ export function useOpenAIRealtime() {
         return;
       }
 
+      stream.getAudioTracks().forEach((track) => {
+        track.enabled = false;
+      });
       localStreamRef.current = stream;
-      setIsMicMuted(false);
+      setIsMicMuted(true);
+      addLog("meta", "mic-muted", "Local microphone track disabled by default");
       setStatus("connecting");
 
       const pc = new RTCPeerConnection();
