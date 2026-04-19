@@ -1222,16 +1222,16 @@ export default function App() {
                   <div className="flex items-center gap-2 rounded-[1.1rem] border border-white/10 bg-[#1d2421] p-2 shadow-[0_14px_40px_rgba(0,0,0,0.26)]">
                     <button
                       type="button"
-                      className={`flex size-10 shrink-0 items-center justify-center rounded-[0.9rem] border text-zinc-100 transition ${
+                      className={`flex size-10 shrink-0 items-center justify-center rounded-[0.9rem] border transition ${
                         !isMicMuted && realtimeStatus === "active"
-                          ? "border-transparent bg-[#b9f075] text-[#213024] shadow-[0_0_0_4px_rgba(185,240,117,0.18)]"
+                          ? "border-transparent bg-[#b9f075] text-black shadow-[0_0_0_4px_rgba(185,240,117,0.18)]"
                           : "border-white/10 bg-[#222925] text-zinc-100 hover:bg-[#272f2a]"
                       }`}
                       onClick={toggleMicMuted}
                       disabled={realtimeStatus !== "active"}
                       title={isMicMuted ? "Unmute Mic" : "Mute Mic"}
                     >
-                      {isMicMuted ? <Mic className="size-4.5" /> : <MicOff className="size-4.5" />}
+                      {isMicMuted ? <MicOff className="size-4.5" /> : <Mic className="size-4.5" />}
                     </button>
                     <input
                       ref={realtimeInputRef}
