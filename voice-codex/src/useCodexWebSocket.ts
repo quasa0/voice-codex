@@ -304,12 +304,22 @@ export function useCodexWebSocket() {
   const turnSegmentIdRef = useRef<Map<string, string>>(new Map());
   const pendingNextTurnSegmentIdRef = useRef<string | null>(null);
   const activeSegmentIdRef = useRef<string | null>(null);
+  const activeTurnStatusRef = useRef<"idle" | "running" | "error">("idle");
+  const activeTurnIdRef = useRef<string | null>(null);
   const codexMessagesRef = useRef<CodexMessage[]>([]);
   const lastIdeOpenedTargetRef = useRef<string | null>(null);
 
   useEffect(() => {
     codexMessagesRef.current = codexMessages;
   }, [codexMessages]);
+
+  useEffect(() => {
+    activeTurnStatusRef.current = activeTurnStatus;
+  }, [activeTurnStatus]);
+
+  useEffect(() => {
+    activeTurnIdRef.current = activeTurnId;
+  }, [activeTurnId]);
 
   const openFileInIde = useCallback((target: IdeFocusTarget | null | undefined) => {
     const normalizedPath = target?.path?.trim();
@@ -440,6 +450,9 @@ export function useCodexWebSocket() {
     updateSegment(segmentId, (segment) => {
       const requestsInput = status === "final" && messageRequestsUserInput(text);
       const isFinalSubstantiveAnswer = status === "final" && !requestsInput && !isCodexProgressMessage(text) && text.trim().length > 0;
+      const sameTurnStillRunning =
+        activeTurnStatusRef.current === "running" &&
+        (!segment.turnId || segment.turnId === activeTurnIdRef.current);
       const blockingQuestion = requestsInput ? text.trim() : isFinalSubstantiveAnswer ? null : segment.blockingQuestion;
       const finalOutcome = isFinalSubstantiveAnswer ? text.trim() : segment.finalOutcome;
 
@@ -449,7 +462,9 @@ export function useCodexWebSocket() {
           requestsInput
             ? "waiting_for_user"
             : isFinalSubstantiveAnswer
-              ? "completed"
+              ? sameTurnStillRunning
+                ? "running"
+                : "completed"
               : segment.codexState === "waiting_for_user" && status === "streaming"
                 ? "running"
                 : segment.codexState,
@@ -723,6 +738,8 @@ export function useCodexWebSocket() {
 
       if (method === "turn/started") {
         const turn = (params as { turn?: { id?: string } })?.turn;
+        activeTurnStatusRef.current = "running";
+        activeTurnIdRef.current = turn?.id ?? null;
         setActiveTurnStatus("running");
         setActiveTurnId(turn?.id ?? null);
         segmentId = segmentId ?? pendingNextTurnSegmentIdRef.current;
@@ -732,6 +749,8 @@ export function useCodexWebSocket() {
       if (method === "turn/completed") {
         const turn = (params as { turn?: { status?: string; error?: { message?: string } } })?.turn;
         segmentId = resolveSegmentId(turnId);
+        activeTurnStatusRef.current = turn?.status === "failed" ? "error" : "idle";
+        activeTurnIdRef.current = null;
         setActiveTurnStatus(turn?.status === "failed" ? "error" : "idle");
         setActiveTurnId(null);
         const errorMessage = turn?.error?.message;

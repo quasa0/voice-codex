@@ -1363,6 +1363,7 @@ export default function App() {
   useEffect(() => {
     if (!pendingCodexNarrationRef.current) return;
     if (queuedInterruptReplacementRef.current) return;
+    if (activeTurnStatus !== "idle") return;
 
     const pending = pendingCodexNarrationRef.current;
     const targetSegment = segments.find((segment) => segment.id === pending.segmentId);
@@ -1382,7 +1383,7 @@ export default function App() {
     } catch (error) {
       console.error(error);
     }
-  }, [agentEvents, segments, sendRealtimeText, setSegmentRelayState]);
+  }, [activeTurnStatus, agentEvents, segments, sendRealtimeText, setSegmentRelayState]);
 
   const handleSendCodexTask = async () => {
     const task = codexTaskText.trim();
