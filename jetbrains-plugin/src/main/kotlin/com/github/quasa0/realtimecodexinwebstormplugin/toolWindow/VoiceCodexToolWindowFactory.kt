@@ -15,6 +15,8 @@ import com.intellij.ui.jcef.JBCefBrowser.createBuilder
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefJSQuery
 import org.cef.callback.CefMediaAccessCallback.MediaPermissionFlags
+import org.cef.browser.CefBrowser
+import org.cef.browser.CefFrame
 import org.cef.handler.CefLoadHandlerAdapter
 import org.cef.handler.CefPermissionHandler
 import java.io.File
@@ -76,15 +78,18 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
             client.addLoadHandler(
                 object : CefLoadHandlerAdapter() {
                     override fun onLoadEnd(
-                        cefBrowser: org.cef.browser.CefBrowser?,
-                        frame: org.cef.browser.CefFrame?,
+                        cefBrowser: CefBrowser?,
+                        frame: CefFrame?,
                         httpStatusCode: Int,
                     ) {
                         if (frame?.isMain != true || cefBrowser == null) return
+                        val basePath = project.basePath ?: ""
+                        val escapedBasePath = jsStringLiteral(basePath)
 
                         cefBrowser.executeJavaScript(
                             """
                             window.IDEBridge = {
+                              projectPath: "${escapedBasePath}",
                               openFile: function(path) {
                                 ${openFileQuery.inject("path")}
                               }
@@ -123,5 +128,12 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
 
     companion object {
         private const val VOICE_CODEX_EMBED_URL = "http://localhost:5173?embed=true"
+
+        private fun jsStringLiteral(value: String): String =
+            value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
     }
 }

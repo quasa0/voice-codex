@@ -12,7 +12,7 @@ import type {
   CodexRelayState,
   CodexSegmentMode,
 } from "./types";
-import { CODEX_PROJECT_CWD, CODEX_MODEL, CODEX_REASONING_EFFORT } from "./codexConfig";
+import { CODEX_MODEL, CODEX_REASONING_EFFORT, getCodexProjectCwd } from "./codexConfig";
 
 let nextId = 1;
 
@@ -100,13 +100,14 @@ function extractTouchedPath(command: string) {
 }
 
 function extractCommandFilePath(command: string) {
+  const projectCwd = getCodexProjectCwd();
   const { workingDirectory, innerCommand } = parseCommandContext(command);
   const match = innerCommand.match(/(?:cat|nl -ba|sed -n '[^']+')\s+(['"]?)([^'"\n]+)\1/);
   if (!match) return null;
   const rawPath = trimWrappedQuotes(match[2]?.trim() ?? "");
   if (!rawPath) return null;
   return joinProjectPath(
-    CODEX_PROJECT_CWD,
+    projectCwd,
     workingDirectory && !rawPath.startsWith("/")
       ? `${workingDirectory.replace(/\/$/, "")}/${rawPath.replace(/^\.\//, "")}`
       : rawPath,
@@ -128,6 +129,7 @@ function extractEditedPath(item: Record<string, unknown>) {
 }
 
 function extractEditedAbsolutePath(item: Record<string, unknown>) {
+  const projectCwd = getCodexProjectCwd();
   const pathCandidate = [
     item.path,
     item.filePath,
@@ -137,7 +139,7 @@ function extractEditedAbsolutePath(item: Record<string, unknown>) {
   ].find((value) => typeof value === "string" && value.trim());
   if (typeof pathCandidate !== "string") return null;
   const normalized = trimWrappedQuotes(pathCandidate.trim());
-  return joinProjectPath(CODEX_PROJECT_CWD, normalized);
+  return joinProjectPath(projectCwd, normalized);
 }
 
 function summarizeCommandLabel(item: Record<string, unknown>) {
@@ -846,7 +848,7 @@ export function useCodexWebSocket() {
   const startThread = useCallback(async (_cwd: string, _model: string): Promise<Thread> => {
     const resp = await send("thread/start", {
       model: CODEX_MODEL,
-      cwd: CODEX_PROJECT_CWD,
+      cwd: getCodexProjectCwd(),
       config: {
         model_reasoning_effort: CODEX_REASONING_EFFORT,
       },

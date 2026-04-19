@@ -4,7 +4,7 @@ import { useCodexWebSocket } from "./useCodexWebSocket";
 import { useOpenAIRealtime } from "./useOpenAIRealtime";
 import type { OpenAIRealtimeStatus } from "./useOpenAIRealtime";
 import type { LogEntry, AgentEvent, ModelInfo, CodexMessage, CodexSegment, CodexSegmentState } from "./types";
-import { CODEX_PROJECT_CWD } from "./codexConfig";
+import { getCodexProjectCwd } from "./codexConfig";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -1071,7 +1071,7 @@ export default function App() {
       throw new Error("No valid Codex model loaded yet.");
     }
     try {
-      await startThread(CODEX_PROJECT_CWD, selectedModel);
+      await startThread(getCodexProjectCwd(), selectedModel);
     } catch (error) {
       setThreadError((error as Error).message);
     }
@@ -1206,7 +1206,7 @@ export default function App() {
       let activeThread = thread;
       if (!activeThread) {
         if (!selectedModel) throw new Error("No valid Codex model loaded yet.");
-        activeThread = await startThread(CODEX_PROJECT_CWD, selectedModel);
+        activeThread = await startThread(getCodexProjectCwd(), selectedModel);
       }
 
       if (routed.action === "codex_interrupt" && activeTurnStatus === "running") {
@@ -1332,7 +1332,7 @@ export default function App() {
       let activeThread = thread;
       if (!activeThread) {
         if (!selectedModel) throw new Error("No valid Codex model loaded yet.");
-        activeThread = await startThread(CODEX_PROJECT_CWD, selectedModel);
+        activeThread = await startThread(getCodexProjectCwd(), selectedModel);
       }
       await startTurn(activeThread.id, task);
       setCodexTaskText("");

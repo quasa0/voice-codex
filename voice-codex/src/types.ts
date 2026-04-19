@@ -92,6 +92,7 @@ export interface CodexSegment {
 declare global {
   interface Window {
     IDEBridge?: {
+      projectPath?: string;
       openFile: (path: string) => void;
     };
   }
