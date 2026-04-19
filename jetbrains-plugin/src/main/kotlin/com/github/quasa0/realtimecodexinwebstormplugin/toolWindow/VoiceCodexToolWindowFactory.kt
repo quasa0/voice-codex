@@ -25,6 +25,8 @@ import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
 import org.cef.handler.CefLoadHandlerAdapter
 import org.cef.handler.CefPermissionHandler
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
 import java.io.File
 import javax.swing.JPanel
 
@@ -58,6 +60,15 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                     }
                 }
 
+                null
+            }
+
+            val copyExportQuery = JBCefJSQuery.create(browser)
+            copyExportQuery.addHandler { exportText ->
+                val trimmed = exportText.trim()
+                if (trimmed.isNotEmpty()) {
+                    Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(trimmed), null)
+                }
                 null
             }
 
@@ -116,6 +127,22 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
 
             toolWindow.setTitleActions(
                 listOf(
+                    object : DumbAwareAction("Copy Transcript", "Copy Realtime and Codex transcript text", AllIcons.Actions.Copy) {
+                        override fun actionPerformed(event: AnActionEvent) {
+                            browser.cefBrowser.executeJavaScript(
+                                """
+                                (() => {
+                                  const text = typeof window.__VOICE_CODEX_EXPORT_TEXT__ === "function"
+                                    ? window.__VOICE_CODEX_EXPORT_TEXT__()
+                                    : (document.body?.innerText ?? "");
+                                  ${copyExportQuery.inject("text")}
+                                })();
+                                """.trimIndent(),
+                                browser.cefBrowser.url,
+                                0,
+                            )
+                        }
+                    },
                     object : DumbAwareAction("Refresh", "Reload Voice Codex", AllIcons.Actions.Refresh) {
                         override fun actionPerformed(event: AnActionEvent) {
                             browser.cefBrowser.reload()

@@ -96,5 +96,6 @@ declare global {
       openFile: (path: string) => void;
       focusFile?: (payload: { path: string; lineStart?: number; lineEnd?: number }) => void;
     };
+    __VOICE_CODEX_EXPORT_TEXT__?: () => string;
   }
 }

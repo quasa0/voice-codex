@@ -902,6 +902,21 @@ function pickDefaultModel(models: ModelInfo[]) {
   return realtimeCandidate?.id ?? models[0]?.id ?? "";
 }
 
+function formatTranscriptExportSection<
+  TMessage extends { role: string; text: string; timestamp: string; status: string }
+>(title: string, messages: TMessage[]) {
+  const body = messages.length === 0
+    ? "No messages."
+    : messages
+        .map((message) => {
+          const cleanedText = message.text.trim() || "(empty)";
+          return `[${message.timestamp}] ${message.role} (${message.status})\n${cleanedText}`;
+        })
+        .join("\n\n");
+
+  return `${title}\n${"=".repeat(title.length)}\n${body}`;
+}
+
 export default function App() {
   const [wsUrl] = useState("ws://localhost:3001?target=ws://127.0.0.1:3000");
   const [selectedModel, setSelectedModel] = useState("");
@@ -980,6 +995,26 @@ export default function App() {
       window.removeEventListener("popstate", syncLocationSearch);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    window.__VOICE_CODEX_EXPORT_TEXT__ = () => {
+      const projectPath = window.IDEBridge?.projectPath?.trim() || getCodexProjectCwd();
+      return [
+        `Voice Codex Export`,
+        `Project: ${projectPath}`,
+        ``,
+        formatTranscriptExportSection("Realtime Agent", realtimeMessages),
+        ``,
+        formatTranscriptExportSection("Codex app-server", codexMessages),
+      ].join("\n");
+    };
+
+    return () => {
+      delete window.__VOICE_CODEX_EXPORT_TEXT__;
+    };
+  }, [codexMessages, realtimeMessages]);
 
   const routeIntent = async (message: string, codexRunning: boolean): Promise<RoutedIntent> => {
     const latestCodexReply = [...codexMessages]
