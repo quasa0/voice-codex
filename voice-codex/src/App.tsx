@@ -200,6 +200,7 @@ function normalizeCodexDispatchText(text: string) {
   if (!trimmed) return "";
 
   const normalized = trimmed
+    .replace(/^(?:bro(?:ther)?)[,:\s]+/i, "")
     .replace(/^(?:please\s+)?(?:can you|could you|would you)\s+/i, "")
     .replace(/^(?:please\s+)?ask\s+codex\s+to\s+/i, "")
     .replace(/^(?:please\s+)?ask\s+(?:it|him|the agent|the coding agent)\s+to\s+/i, "")
@@ -224,6 +225,7 @@ function shouldForceCodexDispatch(text: string) {
   const normalized = text.trim().toLowerCase();
   if (!normalized) return false;
   return (
+    /^(?:bro|brother)\b/.test(normalized) ||
     /^(?:literally\s+)?(?:please\s+)?(?:ask|tell)\s+codex\s+to\b/.test(normalized) ||
     /^(?:literally\s+)?(?:please\s+)?(?:ask|tell)\s+(?:it|him|the agent|the coding agent)\s+to\b/.test(normalized) ||
     /^(?:literally\s+)?(?:please\s+)?i\s+said\s+(?:ask|tell)\s+(?:codex|it|him|the agent|the coding agent)\s+to\b/.test(normalized)
@@ -450,6 +452,7 @@ function shouldForceChatOnly(text: string) {
   const normalized = text.trim().toLowerCase();
   if (!normalized) return false;
   return (
+    /^(?:btw|by the way)\b/.test(normalized) ||
     shouldAvoidCodex(text) ||
     /\bjust\s+(?:tell|answer|say|chat)\b/.test(normalized) ||
     /\byourself\b/.test(normalized) ||
