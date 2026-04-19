@@ -206,6 +206,12 @@ function buildSegmentReadEditSummary(segment: CodexSegment | null) {
   return parts.join(" ") || null;
 }
 
+function getLatestSegmentAssistantProgress(segmentMessages: CodexMessage[]) {
+  return [...segmentMessages]
+    .reverse()
+    .find((message) => message.role === "assistant" && message.kind && message.kind !== "reply" && message.status === "final");
+}
+
 function getLatestCodexCommand(segment: CodexSegment | null) {
   return segment?.commandsRun.at(-1)?.trim() ?? "";
 }
@@ -218,16 +224,40 @@ function latestCommandLooksLikeChecks(command: string) {
   return /\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|lint|check|typecheck|validate)\b/.test(command);
 }
 
-function summarizeRunningSegmentForSpeech(segment: CodexSegment | null) {
+function summarizeRunningSegmentForSpeech(
+  segment: CodexSegment | null,
+  segmentMessages: CodexMessage[] = [],
+  agentEvents: AgentEvent[] = [],
+) {
   if (!segment) return "Codex is idle right now.";
 
   const latestCommand = getLatestCodexCommand(segment);
+  const latestProgressMessage = getLatestSegmentAssistantProgress(segmentMessages);
+  const latestEventSummary = summarizeRecentCommands(getSegmentEvents(agentEvents, segment.id));
   const workingLabel = getSegmentWorkingLabel(segment);
   if (workingLabel === "waiting for input...") {
     return "Codex is waiting for input.";
   }
 
+  if (latestProgressMessage?.kind === "edit") {
+    const latestEditedFile = segment.filesEdited.at(-1);
+    if (latestEditedFile) return `Codex is editing ${latestEditedFile}.`;
+    return "Codex is editing files.";
+  }
+
+  if (latestProgressMessage?.kind === "read") {
+    const latestReadFile = segment.filesRead.at(-1);
+    if (latestReadFile) return `Codex is reading ${latestReadFile}.`;
+    if (latestEventSummary) return `Codex is reading files. ${latestEventSummary}`.slice(0, 180);
+    return "Codex is reading files.";
+  }
+
+  if (latestProgressMessage?.kind === "plan") {
+    return "Codex is updating the plan.";
+  }
+
   if (workingLabel === "reading files...") {
+    if (latestEventSummary) return `Codex is reading files. ${latestEventSummary}`.slice(0, 180);
     return "Codex is reading files.";
   }
 
@@ -242,6 +272,12 @@ function summarizeRunningSegmentForSpeech(segment: CodexSegment | null) {
   }
 
   if (workingLabel === "running command...") {
+    if (latestCommandLooksLikeBuild(latestCommand)) {
+      return "Codex is running a build.";
+    }
+    if (latestCommandLooksLikeChecks(latestCommand)) {
+      return "Codex is running checks.";
+    }
     return "Codex is running a command.";
   }
 
@@ -345,7 +381,7 @@ function buildExactCodexRelayReply(
       }
       return "Hard to tell exactly. Codex is still working.";
     }
-    return summarizeRunningSegmentForSpeech(segment);
+    return summarizeRunningSegmentForSpeech(segment, segmentMessages, agentEvents);
   }
 
   return summarizeSegmentStatus(segment, agentEvents);
