@@ -190,6 +190,17 @@ function getSegmentWorkingLabel(segment: CodexSegment | null) {
   return "working...";
 }
 
+function getSegmentStatusLabel(segment: CodexSegment | null) {
+  if (!segment) return null;
+  if (segment.codexState === "waiting_for_user") return "needs input";
+  if (segment.codexState === "running") {
+    if (segment.mode === "interrupt") return "switching";
+    if (segment.mode === "steer") return "adjusting";
+    return "working";
+  }
+  return "update";
+}
+
 function buildSegmentSnapshot(segment: CodexSegment | null) {
   if (!segment) return null;
   return {
@@ -545,6 +556,8 @@ function CodexConversationPanel({
   activeSegment: CodexSegment | null;
 }) {
   const workingLabel = getSegmentWorkingLabel(activeSegment);
+  const statusLabel = getSegmentStatusLabel(activeSegment);
+  const animateWorkingRow = activeSegment?.codexState === "running";
 
   return (
     <div className="flex h-full min-h-0 flex-col rounded-xl border border-white/8 bg-[#171d1b] p-3">
@@ -597,9 +610,23 @@ function CodexConversationPanel({
           )}
           {workingLabel ? (
             <div className="py-1.5">
-              <div className="mr-12 flex min-h-6 items-center gap-3 overflow-hidden rounded-full border border-[#b9f075]/10 bg-[#b9f075]/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-                <span className="shrink-0 font-medium text-[#d8f5ab]">segment {activeSegment?.mode}</span>
-                <span className="size-1.5 shrink-0 rounded-full bg-[#b9f075] shadow-[0_0_8px_rgba(185,240,117,0.4)]" />
+              <div
+                className={`relative mr-12 flex min-h-6 items-center gap-3 overflow-hidden rounded-full border border-[#b9f075]/10 bg-[#b9f075]/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-zinc-500 ${
+                  animateWorkingRow ? "codex-working-row" : ""
+                }`}
+              >
+                {animateWorkingRow ? (
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-y-0 left-[-24%] w-[24%] bg-[linear-gradient(90deg,transparent,rgba(185,240,117,0.14),transparent)] codex-working-sheen"
+                  />
+                ) : null}
+                <span className="relative shrink-0 font-medium text-[#d8f5ab]">{statusLabel}</span>
+                <span
+                  className={`relative size-1.5 shrink-0 rounded-full bg-[#b9f075] shadow-[0_0_8px_rgba(185,240,117,0.4)] ${
+                    animateWorkingRow ? "codex-working-dot" : ""
+                  }`}
+                />
                 <span className="min-w-0 flex-1 truncate text-zinc-300">{workingLabel}</span>
                 {activeSegment ? <TimestampLabel timestamp={activeSegment.updatedAt} className="shrink-0" /> : null}
               </div>
@@ -1096,6 +1123,29 @@ export default function App() {
         @keyframes realtime-wave {
           0%, 100% { transform: scaleY(0.48); opacity: 0.86; }
           50% { transform: scaleY(1.02); opacity: 1; }
+        }
+        @keyframes codex-working-dot {
+          0%, 100% { transform: scale(0.92); opacity: 0.68; box-shadow: 0 0 0 rgba(185,240,117,0); }
+          50% { transform: scale(1.18); opacity: 1; box-shadow: 0 0 14px rgba(185,240,117,0.45); }
+        }
+        @keyframes codex-working-sheen {
+          0% { transform: translateX(0); opacity: 0; }
+          15% { opacity: 1; }
+          55% { opacity: 1; }
+          100% { transform: translateX(520%); opacity: 0; }
+        }
+        @keyframes codex-working-border {
+          0%, 100% { border-color: rgba(185,240,117,0.08); background-color: rgba(185,240,117,0.04); }
+          50% { border-color: rgba(185,240,117,0.18); background-color: rgba(185,240,117,0.07); }
+        }
+        .codex-working-row {
+          animation: codex-working-border 2.6s ease-in-out infinite;
+        }
+        .codex-working-dot {
+          animation: codex-working-dot 1.35s ease-in-out infinite;
+        }
+        .codex-working-sheen {
+          animation: codex-working-sheen 2.9s ease-in-out infinite;
         }
       `}</style>
       <div className="mx-auto flex max-w-[1180px] flex-col gap-4 px-3 py-4 sm:px-5 lg:px-6">
