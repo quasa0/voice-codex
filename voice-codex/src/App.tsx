@@ -664,9 +664,7 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
                     >
                       {message.text}
                     </span>
-                    <span className="absolute right-0 text-[10px] tracking-[0.16em] text-zinc-500">
-                      {formatLocalTime(message.timestamp)}
-                    </span>
+                    <TimestampLabel timestamp={message.timestamp} className="absolute right-0" />
                   </div>
                 ) : (
                   <>
