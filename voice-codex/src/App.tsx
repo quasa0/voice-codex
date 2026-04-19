@@ -287,7 +287,10 @@ function formatLocalTime(timestamp: string) {
 
 function TimestampLabel({ timestamp, className = "" }: { timestamp: string; className?: string }) {
   return (
-    <span className={`font-mono text-[10.5px] tracking-[0.04em] text-zinc-500 ${className}`.trim()}>
+    <span
+      className={`font-mono tracking-[0.04em] text-zinc-500 ${className}`.trim()}
+      style={{ fontSize: "10.5px", lineHeight: 1 }}
+    >
       {formatLocalTime(timestamp)}
     </span>
   );
