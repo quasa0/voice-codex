@@ -1251,7 +1251,7 @@ export default function App() {
                     />
                     <button
                       type="button"
-                      className="flex h-10 shrink-0 items-center gap-2 rounded-[0.9rem] border border-white/10 bg-[#222925] px-3 text-zinc-200 transition hover:bg-[#272f2a] disabled:cursor-not-allowed disabled:opacity-40"
+                      className="flex size-10 shrink-0 items-center justify-center rounded-[0.9rem] border border-white/10 bg-[#222925] text-zinc-200 transition hover:bg-[#272f2a] disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={() => {
                         try {
                           skipAssistant();
@@ -1263,17 +1263,15 @@ export default function App() {
                       title="Skip assistant audio"
                     >
                       <SkipForward className="size-4" />
-                      Skip
                     </button>
                     <button
                       type="button"
-                      className="flex h-10 shrink-0 items-center gap-2 rounded-[0.9rem] bg-zinc-100 px-3 text-[13px] font-semibold text-[#171d1b] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+                      className="flex size-10 shrink-0 items-center justify-center rounded-[0.9rem] border border-white/10 bg-[#222925] text-zinc-200 transition hover:bg-[#272f2a] disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={handleSendRealtimeText}
                       disabled={realtimeStatus !== "active" || !realtimeText.trim()}
                       title="Send Text"
                     >
                       <Send className="size-4" />
-                      Send
                     </button>
                   </div>
                 </>
