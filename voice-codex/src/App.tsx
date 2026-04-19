@@ -377,7 +377,7 @@ function CodexConversationPanel({ messages }: { messages: CodexMessage[] }) {
                 }`}
               >
                 {message.role === "system" ? (
-                  <div className="flex items-center gap-2">
+                  <div className="relative flex min-h-6 items-center justify-center">
                     <span
                       className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] ${
                         handoffEventClasses(message.eventKind).badge
@@ -385,7 +385,7 @@ function CodexConversationPanel({ messages }: { messages: CodexMessage[] }) {
                     >
                       {message.text}
                     </span>
-                    <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                    <span className="absolute right-0 text-[10px] uppercase tracking-[0.16em] text-zinc-500">
                       {formatLocalTime(message.timestamp)}
                     </span>
                   </div>
@@ -435,7 +435,7 @@ function ConversationPanel({ messages }: { messages: RealtimeMessage[] }) {
                 }`}
               >
                 {message.role === "system" ? (
-                  <div className="flex items-center gap-2">
+                  <div className="relative flex min-h-6 items-center justify-center">
                     <span
                       className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] ${
                         handoffEventClasses(message.eventKind).badge
@@ -443,7 +443,7 @@ function ConversationPanel({ messages }: { messages: RealtimeMessage[] }) {
                     >
                       {message.text}
                     </span>
-                    <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                    <span className="absolute right-0 text-[10px] uppercase tracking-[0.16em] text-zinc-500">
                       {formatLocalTime(message.timestamp)}
                     </span>
                   </div>
