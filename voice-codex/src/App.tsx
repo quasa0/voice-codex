@@ -783,12 +783,12 @@ function CodexConversationPanel({
                         message.role === "assistant" ? "justify-start" : "justify-end"
                       }`}
                     >
+                      <TimestampLabel timestamp={message.timestamp} />
                       {codexMessagePhaseLabel(message) ? (
                         <span className={message.status === "streaming" ? "text-[#b9f075]" : "text-zinc-500"}>
                           {codexMessagePhaseLabel(message)}
                         </span>
                       ) : null}
-                      <TimestampLabel timestamp={message.timestamp} />
                     </div>
                     <div
                       className={`whitespace-pre-wrap text-[15px] leading-[1.65] ${
@@ -879,6 +879,7 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
                         message.role === "user" ? "justify-end" : "justify-start"
                       }`}
                     >
+                      <TimestampLabel timestamp={message.timestamp} />
                       {messagePhaseLabel(message) ? (
                         <span className={message.status === "streaming" ? "text-[#b9f075]" : "text-zinc-500"}>
                           {messagePhaseLabel(message)}
@@ -889,7 +890,6 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
                           {message.source}
                         </span>
                       ) : null}
-                      <TimestampLabel timestamp={message.timestamp} />
                     </div>
                     <div
                       className={`whitespace-pre-wrap text-[15px] leading-[1.65] ${
