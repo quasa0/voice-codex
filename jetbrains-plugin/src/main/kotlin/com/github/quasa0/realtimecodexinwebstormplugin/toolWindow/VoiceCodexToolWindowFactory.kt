@@ -11,11 +11,10 @@ import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.TextAttributes
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vcs.changes.ChangeListManager
-import com.intellij.openapi.vcs.changes.ContentRevision
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindow
@@ -35,6 +34,7 @@ import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.awt.Component
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
 
@@ -181,6 +181,7 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
 
     companion object {
         private const val VOICE_CODEX_EMBED_URL = "http://localhost:5173?embed=true"
+        private val fileSnapshotCache = ConcurrentHashMap<String, String>()
 
         private fun jsStringLiteral(value: String): String =
             value
@@ -217,9 +218,12 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
 
             val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(ioFile) ?: return
             val shouldPreferDiff = preferDiff || target.preferDiff
-            if (shouldPreferDiff && openDiffForChangedFile(project, virtualFile)) {
+            refreshFileFromDisk(virtualFile, forceReloadDocument = shouldPreferDiff)
+            if (shouldPreferDiff && openDiffForChangedFile(project, virtualFile, target)) {
                 return
             }
+
+            rememberSnapshot(project, virtualFile)
 
             val fileEditorManager = FileEditorManager.getInstance(project)
             val zeroBasedLine = (target.lineStart ?: 1).coerceAtLeast(1) - 1
@@ -268,46 +272,90 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
             restoreFocus(focusComponentToRestore)
         }
 
-        private fun openDiffForChangedFile(project: Project, virtualFile: VirtualFile): Boolean {
-            val change = ChangeListManager.getInstance(project).getChange(virtualFile) ?: return false
-            val beforeContent = createRevisionDiffContent(project, change.beforeRevision, virtualFile, preferCurrentFile = false) ?: return false
-            val afterContent = createRevisionDiffContent(project, change.afterRevision, virtualFile, preferCurrentFile = true) ?: return false
-            val diffTitle = buildDiffTitle(project, virtualFile)
-            closeExistingDiffTabs(project, diffTitle)
+        private fun openDiffForChangedFile(project: Project, virtualFile: VirtualFile, target: IdeFocusTarget): Boolean {
+            val beforeText = fileSnapshotCache[snapshotKey(project, virtualFile)] ?: return false
+            val afterText = readCurrentFileText(virtualFile) ?: return false
+            if (beforeText == afterText) return false
+
+            val beforeContent = createSnapshotDiffContent(project, virtualFile, beforeText, target.lineStart, target.lineEnd)
+            val afterContent = createSnapshotDiffContent(project, virtualFile, afterText, target.lineStart, target.lineEnd)
+            closeExistingDiffTabs(project)
 
             val request = SimpleDiffRequest(
-                diffTitle,
+                buildDiffTitle(project, virtualFile, target.lineStart, target.lineEnd),
                 beforeContent,
                 afterContent,
                 "Before",
                 "Current",
             )
             DiffManager.getInstance().showDiff(project, request)
+            fileSnapshotCache[snapshotKey(project, virtualFile)] = afterText
             return true
         }
 
-        private fun createRevisionDiffContent(
+        private fun createSnapshotDiffContent(
             project: Project,
-            revision: ContentRevision?,
             virtualFile: VirtualFile,
-            preferCurrentFile: Boolean,
-        ): com.intellij.diff.contents.DiffContent? {
+            sourceText: String,
+            lineStart: Int?,
+            lineEnd: Int?,
+        ): com.intellij.diff.contents.DiffContent {
             val factory = DiffContentFactory.getInstance()
-            if (revision == null) return factory.createEmpty()
-            if (preferCurrentFile && virtualFile.isValid) {
-                return factory.create(project, virtualFile)
+            val fileType = virtualFile.fileType
+            if (lineStart != null) {
+                val snippetText = extractSnippetText(sourceText, lineStart, lineEnd ?: lineStart)
+                return factory.create(project, snippetText, fileType)
             }
-
-            val content = try {
-                revision.content
-            } catch (_: Exception) {
-                null
-            } ?: return factory.createEmpty()
-
-            return factory.create(project, content, virtualFile)
+            return factory.create(project, sourceText, fileType)
         }
 
-        private fun buildDiffTitle(project: Project, virtualFile: VirtualFile): String {
+        private fun extractSnippetText(
+            sourceText: String,
+            lineStart: Int,
+            lineEnd: Int,
+        ): String {
+            val lines = sourceText.split("\n")
+            if (lines.isEmpty()) return sourceText
+
+            val contextLines = 3
+            val safeStart = (lineStart - 1).coerceAtLeast(0)
+            val safeEnd = (lineEnd - 1).coerceAtLeast(safeStart)
+            val fromIndex = (safeStart - contextLines).coerceAtLeast(0)
+            val toIndex = (safeEnd + contextLines + 1).coerceAtMost(lines.size)
+
+            return lines.subList(fromIndex, toIndex).joinToString("\n")
+        }
+
+        private fun readCurrentFileText(virtualFile: VirtualFile): String? {
+            val document = FileDocumentManager.getInstance().getDocument(virtualFile)
+            if (document != null) return document.text
+            return try {
+                String(virtualFile.contentsToByteArray())
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        private fun snapshotKey(project: Project, virtualFile: VirtualFile): String {
+            val basePath = project.basePath ?: ""
+            return "$basePath::${virtualFile.path}"
+        }
+
+        private fun rememberSnapshot(project: Project, virtualFile: VirtualFile) {
+            val currentText = readCurrentFileText(virtualFile) ?: return
+            fileSnapshotCache[snapshotKey(project, virtualFile)] = currentText
+        }
+
+        private fun refreshFileFromDisk(virtualFile: VirtualFile, forceReloadDocument: Boolean) {
+            virtualFile.refresh(false, false)
+            val documentManager = FileDocumentManager.getInstance()
+            val document = documentManager.getDocument(virtualFile) ?: return
+            if (forceReloadDocument && !documentManager.isDocumentUnsaved(document)) {
+                documentManager.reloadFromDisk(document)
+            }
+        }
+
+        private fun buildDiffTitle(project: Project, virtualFile: VirtualFile, lineStart: Int? = null, lineEnd: Int? = null): String {
             val basePath = project.basePath
             val absolutePath = virtualFile.path
             val displayPath = if (basePath != null && absolutePath.startsWith("$basePath/")) {
@@ -315,16 +363,18 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
             } else {
                 virtualFile.name
             }
+            if (lineStart != null) {
+                val endLabel = lineEnd?.takeIf { it != lineStart }?.let { "-$it" } ?: ""
+                return "Changes in $displayPath:$lineStart$endLabel"
+            }
             return "Changes in $displayPath"
         }
 
-        private fun closeExistingDiffTabs(project: Project, diffTitle: String) {
+        private fun closeExistingDiffTabs(project: Project) {
             val fileEditorManager = FileEditorManager.getInstance(project)
             fileEditorManager.openFiles
                 .filter { openFile ->
-                    openFile.name == diffTitle ||
-                        openFile.presentableName == diffTitle ||
-                        openFile.name.startsWith("Changes in ") ||
+                    openFile.name.startsWith("Changes in ") ||
                         openFile.presentableName.startsWith("Changes in ")
                 }
                 .forEach(fileEditorManager::closeFile)
