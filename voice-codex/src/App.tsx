@@ -102,10 +102,6 @@ function statusDotClass(status: string) {
   return "bg-zinc-400";
 }
 
-function controlSurfaceClass() {
-  return "rounded-xl border-white/10 bg-[#1f2724] text-zinc-100 shadow-none";
-}
-
 function panelBadgeClass() {
   return "h-8 rounded-full border-[#b9f075]/20 bg-[#b9f075]/10 px-3 text-[13px] font-medium text-[#d8f5ab]";
 }
@@ -856,12 +852,12 @@ export default function App() {
               {status === "connected" ? (
                 <>
                   {thread ? (
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-2">
+                    <div className="flex min-h-0 flex-1 flex-col space-y-4">
+                      <div className="flex items-center gap-2.5 rounded-[1.45rem] border border-white/8 bg-[#202824]/70 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                         <Input
                           value={codexTaskText}
                           onChange={(event) => setCodexTaskText(event.target.value)}
-                          className={`flex-1 ${controlSurfaceClass()}`}
+                          className="h-12 flex-1 rounded-[1.1rem] border-white/10 bg-[#1f2623] px-5 text-[0.98rem] text-zinc-100 placeholder:text-zinc-500 focus-visible:border-[#b9f075]/35 focus-visible:ring-[#b9f075]/15"
                           placeholder="Type to the Codex thread"
                           onKeyDown={(event) => {
                             if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
@@ -874,18 +870,20 @@ export default function App() {
                           }}
                         />
                         <Button
-                          size="icon"
+                          size="icon-lg"
                           variant="outline"
-                          className="size-10 shrink-0 border-white/10 bg-[#1b221f] text-zinc-100 hover:bg-[#222b27]"
+                          className="size-12 shrink-0 rounded-[1rem] border-white/10 bg-[#1f2623] text-zinc-100 hover:bg-[#252d29]"
                           onClick={() => void handleSendCodexTask()}
                           disabled={activeTurnStatus === "running" && !activeTurnId}
                           title="Send Codex Task"
                         >
-                          <Send className="size-4" />
+                          <Send className="size-4.5" />
                         </Button>
                       </div>
 
-                      <CodexConversationPanel messages={codexMessages} />
+                      <div className="min-h-0 flex-1">
+                        <CodexConversationPanel messages={codexMessages} />
+                      </div>
                     </div>
                   ) : (
                     <div className="rounded-xl border border-white/8 bg-[#171d1b] p-4 text-sm text-zinc-400">
