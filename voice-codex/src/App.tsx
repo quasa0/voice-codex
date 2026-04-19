@@ -1045,10 +1045,10 @@ function PanelShell({
   contentClassName?: string;
 }) {
   return (
-    <Card className="h-full !gap-0 !py-0 rounded-none border-0 border-r border-[#e1e4e8] bg-white shadow-none last:border-r-0">
-      <CardHeader className="!gap-0 border-b border-[#e1e4e8] !px-2.5 !py-1">
+    <Card className="h-full !gap-0 !py-0 rounded-none border-0 bg-white shadow-none">
+      <CardHeader className="!gap-0 border-b border-[#EBEBEF] !px-2.5 !py-1">
         <div className="flex items-center justify-between gap-2.5">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-1.5">
             {icon ? (
               <div
                 className={`flex size-6.5 items-center justify-center rounded-md border ${
@@ -1061,7 +1061,7 @@ function PanelShell({
               </div>
             ) : null}
             <div>
-              <CardTitle className="text-[13.5px] font-semibold tracking-tight text-[#1f2328]">{title}</CardTitle>
+              <CardTitle className="text-[13.5px] font-medium tracking-tight text-[#1f2328]">{title}</CardTitle>
               {description ? (
                 <CardDescription className="text-[12px] leading-5 text-[#565c66]">{description}</CardDescription>
               ) : null}
@@ -1245,7 +1245,7 @@ function CodexConversationPanel({
   }, [messages, activeSegment?.id, activeSegment?.updatedAt]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-md border border-[#e1e4e8] bg-[#f2f3f5] px-2 py-2">
+    <div className="flex h-full min-h-0 flex-col rounded-md border border-[#EBEBEF] bg-[#f2f3f5] px-2 py-2">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
         <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-4"}>
           {messages.length === 0 ? (
@@ -1324,7 +1324,7 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
   }, [messages]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-md border border-[#e1e4e8] bg-[#f2f3f5] px-2 py-2">
+    <div className="flex h-full min-h-0 flex-col rounded-md border border-[#EBEBEF] bg-[#f2f3f5] px-2 py-2">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
         <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-4"}>
           {messages.length === 0 ? (
@@ -2295,7 +2295,7 @@ export default function App() {
       `}</style>
       <div className={`flex flex-col gap-4 ${paneOnlyMode ? "h-full w-full px-0 py-0" : "mx-auto max-w-[1320px] px-3 py-4 sm:px-5 lg:px-6"}`}>
         {!paneOnlyMode ? (
-          <Card className="overflow-hidden border border-[#e1e4e8] bg-white shadow-[0_1px_2px_rgba(18,22,28,0.04)]">
+          <Card className="overflow-hidden border border-[#EBEBEF] bg-white shadow-[0_1px_2px_rgba(18,22,28,0.04)]">
             <CardContent className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="max-w-3xl space-y-3">
                 <Badge variant="outline" className="border border-[#e1e4e8] bg-white text-[#565c66]">
@@ -2316,7 +2316,7 @@ export default function App() {
         ) : null}
 
         <div className={paneOnlyMode ? "flex min-h-0 flex-1 flex-col" : "space-y-4"}>
-          <div className={`grid items-stretch gap-0 border-y border-[#e1e4e8] bg-white md:grid-cols-2 ${paneOnlyMode ? "min-h-0 flex-1 auto-rows-fr" : "rounded-lg border-x shadow-[0_1px_2px_rgba(18,22,28,0.04)]"}`}>
+          <div className={`grid items-stretch gap-0 bg-white md:grid-cols-2 md:divide-x md:divide-[#EBEBEF] ${paneOnlyMode ? "min-h-0 flex-1 auto-rows-fr" : "rounded-lg border border-[#EBEBEF] shadow-[0_1px_2px_rgba(18,22,28,0.04)]"}`}>
             <PanelShell
               title="Realtime Voice"
               icon={<OpenAIWordmarkIcon />}
