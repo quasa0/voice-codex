@@ -14,7 +14,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 const TERSE_AGENT_STYLE = [
@@ -1335,11 +1334,11 @@ export default function App() {
                 <>
                   {thread ? (
                     <div className="flex min-h-0 flex-1 flex-col space-y-4">
-                      <div className="flex items-center gap-2.5 rounded-[1.45rem] border border-white/8 bg-[#202824]/70 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-                        <Input
+                      <div className="flex items-center gap-2 rounded-[1.1rem] border border-white/10 bg-[#1d2421] p-2 shadow-[0_14px_40px_rgba(0,0,0,0.26)]">
+                        <input
                           value={codexTaskText}
                           onChange={(event) => setCodexTaskText(event.target.value)}
-                          className="h-12 flex-1 rounded-[1.1rem] border-white/10 bg-[#1f2623] px-5 text-[0.98rem] text-zinc-100 placeholder:text-zinc-500 focus-visible:border-[#b9f075]/35 focus-visible:ring-[#b9f075]/15"
+                          className="h-10 min-w-0 flex-1 rounded-[0.95rem] border border-white/10 bg-[#222925] px-4 text-[15px] text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-[#b9f075]/35 focus:ring-2 focus:ring-[#b9f075]/10"
                           placeholder="Type to the Codex thread"
                           onKeyDown={(event) => {
                             if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
@@ -1351,16 +1350,17 @@ export default function App() {
                             }
                           }}
                         />
-                        <Button
-                          size="icon-lg"
-                          variant="outline"
-                          className="size-12 shrink-0 rounded-[1rem] border-white/10 bg-[#1f2623] text-zinc-100 hover:bg-[#252d29]"
-                          onClick={() => void handleSendCodexTask()}
+                        <button
+                          type="button"
+                          className="flex size-10 shrink-0 items-center justify-center rounded-[0.9rem] border border-white/10 bg-[#222925] text-zinc-200 transition hover:bg-[#272f2a] disabled:cursor-not-allowed disabled:opacity-40"
+                          onClick={() => {
+                            void handleSendCodexTask();
+                          }}
                           disabled={activeTurnStatus === "running" && !activeTurnId}
                           title="Send Codex Task"
                         >
-                          <Send className="size-4.5" />
-                        </Button>
+                          <Send className="size-4" />
+                        </button>
                       </div>
 
                       <div className="min-h-0 flex-1">
