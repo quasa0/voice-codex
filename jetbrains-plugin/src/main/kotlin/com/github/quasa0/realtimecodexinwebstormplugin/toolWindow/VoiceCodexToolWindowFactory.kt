@@ -231,7 +231,7 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
             val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(ioFile) ?: return
             val shouldPreferDiff = preferDiff || target.preferDiff
             refreshFileFromDisk(virtualFile, forceReloadDocument = shouldPreferDiff)
-            if (shouldPreferDiff && openDiffForChangedFile(project, virtualFile, target)) {
+            if (shouldPreferDiff && openDiffForChangedFile(project, virtualFile, target, focusComponentToRestore)) {
                 return
             }
 
@@ -284,7 +284,12 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
             restoreFocus(focusComponentToRestore)
         }
 
-        private fun openDiffForChangedFile(project: Project, virtualFile: VirtualFile, target: IdeFocusTarget): Boolean {
+        private fun openDiffForChangedFile(
+            project: Project,
+            virtualFile: VirtualFile,
+            target: IdeFocusTarget,
+            focusComponentToRestore: Component? = null,
+        ): Boolean {
             val beforeText = fileSnapshotCache[snapshotKey(project, virtualFile)] ?: return false
             val afterText = readCurrentFileText(virtualFile) ?: return false
             if (beforeText == afterText) return false
@@ -301,6 +306,7 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                 "Current",
             )
             DiffManager.getInstance().showDiff(project, request)
+            restoreFocus(focusComponentToRestore)
             fileSnapshotCache[snapshotKey(project, virtualFile)] = afterText
             return true
         }
