@@ -62,26 +62,72 @@ type RoutedIntent = {
   reason: string;
 };
 
+function extractTouchedPath(command: string) {
+  const match = command.match(/(?:cat|ls|nl -ba|sed -n '[^']+'|rg --files)\s+(['"]?)([^'"\n]+)\1/);
+  if (!match) return null;
+  const rawPath = match[2]?.trim();
+  if (!rawPath) return null;
+  const normalized = rawPath.replace(/^cd\s+[^&]+&&\s*/, "").trim();
+  const segments = normalized.split("/").filter(Boolean);
+  return segments.slice(-2).join("/") || normalized;
+}
+
+function summarizeRecentCommands(agentEvents: AgentEvent[]) {
+  const recentCompleted = [...agentEvents]
+    .reverse()
+    .filter((event) => {
+      if (event.method !== "item/completed") return false;
+      const item = (event.raw as { item?: { type?: string; command?: string } })?.item;
+      return item?.type === "commandExecution" && typeof item.command === "string";
+    })
+    .slice(0, 8);
+
+  const paths: string[] = [];
+  for (const event of recentCompleted) {
+    const command = ((event.raw as { item?: { command?: string } })?.item?.command ?? "").trim();
+    const path = extractTouchedPath(command);
+    if (!path) continue;
+    if (!paths.includes(path)) paths.push(path);
+    if (paths.length >= 4) break;
+  }
+
+  if (paths.length === 0) return null;
+  if (paths.length === 1) return `Read ${paths[0]}.`;
+  if (paths.length === 2) return `Read ${paths[0]} and ${paths[1]}.`;
+  return `Read ${paths.slice(0, -1).join(", ")}, and ${paths.at(-1)}.`;
+}
+
 function summarizeCurrentCodexActivity(
   activeTurnStatus: "idle" | "running" | "error",
   agentEvents: AgentEvent[],
   codexMessages: CodexMessage[],
 ) {
+  const recentEvents = [...agentEvents].reverse();
+  const latestPlan = recentEvents.find((event) => event.method === "turn/plan/updated");
+  const recentCommandSummary = summarizeRecentCommands(agentEvents);
+
   if (activeTurnStatus !== "running") {
     const latestCodexReply = [...codexMessages]
       .reverse()
       .find((message) => message.role === "assistant" && message.status === "final" && message.text.trim());
+
+    if (recentCommandSummary && latestCodexReply) {
+      const firstLine = latestCodexReply.text.trim().split("\n").find(Boolean) ?? latestCodexReply.text.trim();
+      return `Codex is idle. ${recentCommandSummary} Latest result: ${firstLine}`.slice(0, 420);
+    }
 
     if (latestCodexReply) {
       const firstLine = latestCodexReply.text.trim().split("\n").find(Boolean) ?? latestCodexReply.text.trim();
       return `Codex is idle. Latest result: ${firstLine}`.slice(0, 320);
     }
 
+    if (recentCommandSummary) {
+      return `Codex is idle. ${recentCommandSummary}`.slice(0, 320);
+    }
+
     return "Codex is idle right now.";
   }
 
-  const recentEvents = [...agentEvents].reverse();
-  const latestPlan = recentEvents.find((event) => event.method === "turn/plan/updated");
   const latestCommand = recentEvents.find(
     (event) =>
       event.method === "item/started" &&
@@ -92,8 +138,20 @@ function summarizeCurrentCodexActivity(
     .reverse()
     .find((message) => message.role === "assistant" && message.text.trim());
 
+  if (latestPlan?.summary && recentCommandSummary) {
+    return `Codex is working. ${recentCommandSummary} ${latestPlan.summary}`.slice(0, 420);
+  }
+
   if (latestPlan?.summary) {
     return `Codex is working. ${latestPlan.summary}`.slice(0, 320);
+  }
+
+  if (recentCommandSummary && latestCommand?.summary) {
+    return `Codex is working. ${recentCommandSummary} ${latestCommand.summary}`.slice(0, 360);
+  }
+
+  if (recentCommandSummary) {
+    return `Codex is working. ${recentCommandSummary}`.slice(0, 320);
   }
 
   if (latestCommand?.summary) {
@@ -696,7 +754,7 @@ export default function App() {
         if (routed.chat_mode === "relay_codex_status") {
           const codexStatus = summarizeCurrentCodexActivity(activeTurnStatus, agentEvents, codexMessages);
           sendRealtimeText(
-            `Summarize current Codex activity for the user in one short sentence. Do not repeat the user's wording. Do not invent details.\n\nCurrent Codex status:\n${codexStatus}`,
+            `Summarize current Codex activity for the user in one or two short sentences. Include what Codex is doing now and, if available, the main files or steps it has already touched. Do not repeat the user's wording. Do not invent details.\n\nCurrent Codex status:\n${codexStatus}`,
             { requestResponse: true, visible: false },
           );
           return;
