@@ -42,6 +42,25 @@ function summarizeEvent(event: unknown) {
   return String(e?.type ?? "event");
 }
 
+const IDE_FOCUS_FILE_TOOL = {
+  type: "function",
+  name: "focus_file_in_ide",
+  description:
+    "Focuses or opens a file in the active JetBrains IDE project. Use this when the user asks to show, open, reveal, or focus a file.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: {
+        type: "string",
+        description:
+          "File path to focus. Prefer a project-relative path like src/App.tsx when possible, but absolute paths also work.",
+      },
+    },
+    required: ["path"],
+    additionalProperties: false,
+  },
+} as const;
+
 export function useOpenAIRealtime() {
   const [status, setStatus] = useState<OpenAIRealtimeStatus>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +83,7 @@ export function useOpenAIRealtime() {
   const assistantHiddenResponseSeqByItemRef = useRef<Map<string, number>>(new Map());
   const isMicMutedRef = useRef(true);
   const assistantSpeakingTimeoutRef = useRef<number | null>(null);
+  const pendingFunctionCallArgsRef = useRef<Map<string, string>>(new Map());
 
   const clearAssistantSpeakingTimeout = useCallback(() => {
     if (assistantSpeakingTimeoutRef.current !== null) {
@@ -133,6 +153,51 @@ export function useOpenAIRealtime() {
     ]);
   }, []);
 
+  const sendClientEvent = useCallback((label: string, payload: Record<string, unknown>) => {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== "open") {
+      throw new Error("OpenAI Realtime data channel is not open");
+    }
+
+    dc.send(JSON.stringify(payload));
+    addLog("client", label, JSON.stringify(payload, null, 2));
+  }, [addLog]);
+
+  const focusFileInIde = useCallback((path: string) => {
+    const normalizedPath = path.trim();
+    if (!normalizedPath) {
+      return {
+        ok: false,
+        message: "Missing file path.",
+      };
+    }
+
+    if (!window.IDEBridge?.openFile) {
+      return {
+        ok: false,
+        message: "IDE bridge unavailable.",
+      };
+    }
+
+    window.IDEBridge.openFile(normalizedPath);
+    return {
+      ok: true,
+      message: `Focused ${normalizedPath}.`,
+    };
+  }, []);
+
+  const submitToolResult = useCallback((callId: string, output: unknown) => {
+    sendClientEvent("conversation.item.create", {
+      type: "conversation.item.create",
+      item: {
+        type: "function_call_output",
+        call_id: callId,
+        output: JSON.stringify(output),
+      },
+    });
+    sendClientEvent("response.create", { type: "response.create" });
+  }, [sendClientEvent]);
+
   const addSystemMessage = useCallback((text: string, eventKind?: OpenAIRealtimeMessage["eventKind"]) => {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -175,33 +240,16 @@ export function useOpenAIRealtime() {
   }, [clearAssistantSpeakingTimeout]);
 
   const requestResponse = useCallback(() => {
-    const dc = dcRef.current;
-    if (!dc || dc.readyState !== "open") {
-      throw new Error("OpenAI Realtime data channel is not open");
-    }
-
-    const responseEvent = { type: "response.create" };
-    dc.send(JSON.stringify(responseEvent));
-    addLog("client", "response.create", JSON.stringify(responseEvent, null, 2));
-  }, [addLog]);
+    sendClientEvent("response.create", { type: "response.create" });
+  }, [sendClientEvent]);
 
   const cancelAssistantResponse = useCallback(() => {
-    const dc = dcRef.current;
-    if (!dc || dc.readyState !== "open") {
-      throw new Error("OpenAI Realtime data channel is not open");
-    }
-
-    const cancelEvent = { type: "response.cancel" };
-    dc.send(JSON.stringify(cancelEvent));
-    addLog("client", "response.cancel", JSON.stringify(cancelEvent, null, 2));
-
-    const clearEvent = { type: "output_audio_buffer.clear" };
-    dc.send(JSON.stringify(clearEvent));
-    addLog("client", "output_audio_buffer.clear", JSON.stringify(clearEvent, null, 2));
+    sendClientEvent("response.cancel", { type: "response.cancel" });
+    sendClientEvent("output_audio_buffer.clear", { type: "output_audio_buffer.clear" });
 
     clearAssistantSpeakingTimeout();
     setIsAssistantSpeaking(false);
-  }, [addLog, clearAssistantSpeakingTimeout]);
+  }, [clearAssistantSpeakingTimeout, sendClientEvent]);
 
   const connect = useCallback(
     async ({ model, voice, instructions }: ConnectOptions) => {
@@ -253,6 +301,13 @@ export function useOpenAIRealtime() {
 
       dc.addEventListener("open", () => {
         addLog("meta", "data-channel", "OpenAI Realtime data channel opened");
+        sendClientEvent("session.update", {
+          type: "session.update",
+          session: {
+            tools: [IDE_FOCUS_FILE_TOOL],
+            tool_choice: "auto",
+          },
+        });
         setConnectedAt(Date.now());
         setElapsedSeconds(0);
         setStatus("active");
@@ -392,6 +447,39 @@ export function useOpenAIRealtime() {
             }
           }
 
+          if (type === "response.function_call_arguments.delta") {
+            const itemId = String(parsed.item_id ?? "");
+            const delta = String(parsed.delta ?? "");
+            if (itemId && delta) {
+              const existing = pendingFunctionCallArgsRef.current.get(itemId) ?? "";
+              pendingFunctionCallArgsRef.current.set(itemId, `${existing}${delta}`);
+            }
+          }
+
+          if (type === "response.function_call_arguments.done") {
+            const itemId = String(parsed.item_id ?? "");
+            const callId = String(parsed.call_id ?? "");
+            const name = String(parsed.name ?? "");
+            const completedArguments =
+              String(parsed.arguments ?? "") || pendingFunctionCallArgsRef.current.get(itemId) || "";
+            if (itemId) {
+              pendingFunctionCallArgsRef.current.delete(itemId);
+            }
+
+            let parsedArguments: Record<string, unknown> = {};
+            try {
+              parsedArguments = completedArguments ? JSON.parse(completedArguments) as Record<string, unknown> : {};
+            } catch {
+              parsedArguments = {};
+            }
+
+            if (name === "focus_file_in_ide" && callId) {
+              const path = typeof parsedArguments.path === "string" ? parsedArguments.path : "";
+              const result = focusFileInIde(path);
+              submitToolResult(callId, result);
+            }
+          }
+
           if (type === "output_audio_buffer.started") {
             setAssistantSpeakingWithGrace(true);
           }
@@ -440,16 +528,11 @@ export function useOpenAIRealtime() {
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
       addLog("meta", "webrtc-answer", "Accepted OpenAI Realtime SDP answer");
     },
-    [addLog, disconnect, removePendingVoiceMessage, setAssistantSpeakingWithGrace, upsertUserVoiceMessage],
+    [addLog, disconnect, focusFileInIde, removePendingVoiceMessage, sendClientEvent, setAssistantSpeakingWithGrace, submitToolResult, upsertUserVoiceMessage],
   );
 
   const sendText = useCallback(
     (text: string, options: SendTextOptions = {}) => {
-      const dc = dcRef.current;
-      if (!dc || dc.readyState !== "open") {
-        throw new Error("OpenAI Realtime data channel is not open");
-      }
-
       const { requestResponse: shouldRequestResponse = true, visible = true } = options;
       const isHiddenRelay = shouldRequestResponse && !visible;
 
@@ -477,12 +560,9 @@ export function useOpenAIRealtime() {
         },
       };
 
-      dc.send(JSON.stringify(userEvent));
-      addLog("client", "conversation.item.create", JSON.stringify(userEvent, null, 2));
+      sendClientEvent("conversation.item.create", userEvent);
       if (shouldRequestResponse) {
-        const responseEvent = { type: "response.create" };
-        dc.send(JSON.stringify(responseEvent));
-        addLog("client", "response.create", JSON.stringify(responseEvent, null, 2));
+        sendClientEvent("response.create", { type: "response.create" });
       }
       pendingTextResponseRef.current = text;
       if (visible) {
@@ -499,7 +579,7 @@ export function useOpenAIRealtime() {
         ]);
       }
     },
-    [addLog, cancelAssistantResponse],
+    [cancelAssistantResponse, sendClientEvent],
   );
 
   const setMicMuted = useCallback((muted: boolean) => {
