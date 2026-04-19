@@ -265,7 +265,7 @@ function codexProxyPlugin(): Plugin {
                     prefix_padding_ms: 500,
                     silence_duration_ms: 900,
                     create_response: false,
-                    interrupt_response: false,
+                    interrupt_response: true,
                   },
                 },
                 output: {

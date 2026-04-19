@@ -172,6 +172,11 @@ export function useOpenAIRealtime() {
     const cancelEvent = { type: "response.cancel" };
     dc.send(JSON.stringify(cancelEvent));
     addLog("client", "response.cancel", JSON.stringify(cancelEvent, null, 2));
+
+    const clearEvent = { type: "output_audio_buffer.clear" };
+    dc.send(JSON.stringify(clearEvent));
+    addLog("client", "output_audio_buffer.clear", JSON.stringify(clearEvent, null, 2));
+
     clearAssistantSpeakingTimeout();
     setIsAssistantSpeaking(false);
   }, [addLog, clearAssistantSpeakingTimeout]);
