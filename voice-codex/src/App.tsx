@@ -95,19 +95,6 @@ function codexMessagePhaseLabel(message: CodexMessage) {
   return message.status === "streaming" ? "streaming" : "final";
 }
 
-function statusBadgeClass(status: string) {
-  if (status === "connected" || status === "active" || status === "apiKey") {
-    return "border-[#b9f075]/20 bg-[#b9f075]/10 text-[#d8f5ab]";
-  }
-  if (status === "connecting" || status === "requesting-mic") {
-    return "border-[#b9f075]/15 bg-[#b9f075]/8 text-[#cbe998]";
-  }
-  if (status === "error") {
-    return "border-red-400/40 bg-red-500/12 text-red-200";
-  }
-  return "border-white/8 bg-black/12 text-zinc-300";
-}
-
 function statusDotClass(status: string) {
   if (status === "connected" || status === "active" || status === "apiKey") return "bg-[#b9f075]";
   if (status === "connecting" || status === "requesting-mic") return "bg-[#d0ef9e]";
@@ -739,30 +726,6 @@ export default function App() {
                 </p>
               </div>
             </div>
-
-            <div className="grid w-full max-w-md gap-2 sm:grid-cols-3 lg:pt-1">
-              <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
-                <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-zinc-300">Codex WS</div>
-                <Badge className={`gap-2 ${statusBadgeClass(status)}`}>
-                  <span className={`size-1.5 rounded-full ${statusDotClass(status)}`} />
-                  {status}
-                </Badge>
-              </div>
-              <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
-                <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-zinc-300">Realtime</div>
-                <Badge className={`gap-2 ${statusBadgeClass(realtimeStatus)}`}>
-                  <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
-                  {realtimeStatus}
-                </Badge>
-              </div>
-              <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
-                <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-zinc-300">Auth</div>
-                <Badge className={`gap-2 ${statusBadgeClass(account?.type ?? "unknown")}`}>
-                  <span className={`size-1.5 rounded-full ${statusDotClass(account?.type ?? "unknown")}`} />
-                  {account?.type ?? "unknown"}
-                </Badge>
-              </div>
-            </div>
           </CardContent>
         </Card>
 
@@ -808,21 +771,21 @@ export default function App() {
                     ) : null}
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-3 rounded-[1.6rem] border border-white/8 bg-[#202824]/70 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                     <Button
-                      size="icon"
-                      className="size-10 shrink-0 bg-[#b9f075] text-[#213024] hover:bg-[#c9f589]"
+                      size="icon-lg"
+                      className="size-14 shrink-0 rounded-[1.15rem] border border-[#d6ff96]/35 bg-[#b9f075] text-[#213024] shadow-[0_10px_24px_rgba(185,240,117,0.18)] hover:bg-[#c9f589]"
                       onClick={toggleMicMuted}
                       disabled={realtimeStatus !== "active"}
                       title={isMicMuted ? "Unmute Mic" : "Mute Mic"}
                     >
-                      {isMicMuted ? <Mic className="size-4" /> : <MicOff className="size-4" />}
+                      {isMicMuted ? <Mic className="size-5" /> : <MicOff className="size-5" />}
                     </Button>
                     <Input
                       ref={realtimeInputRef}
                       value={realtimeText}
                       onChange={(event) => setRealtimeText(event.target.value)}
-                      className={`flex-1 ${controlSurfaceClass()}`}
+                      className="h-14 flex-1 rounded-[1.25rem] border-white/10 bg-[#1f2623] px-6 text-[1.02rem] text-zinc-100 placeholder:text-zinc-500 focus-visible:border-[#b9f075]/35 focus-visible:ring-[#b9f075]/15"
                       placeholder="Type to the realtime session"
                       onKeyDown={(event) => {
                         if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
@@ -835,23 +798,23 @@ export default function App() {
                       }}
                     />
                     <Button
-                      size="icon"
+                      size="icon-lg"
                       variant="outline"
-                      className="size-10 shrink-0 border-white/10 bg-[#1b221f] text-zinc-100 hover:bg-[#222b27]"
+                      className="size-14 shrink-0 rounded-[1.15rem] border-white/10 bg-[#1f2623] text-zinc-100 hover:bg-[#252d29]"
                       onClick={handleSendRealtimeText}
                       disabled={realtimeStatus !== "active"}
                       title="Send Text"
                     >
-                      <Send className="size-4" />
+                      <Send className="size-5" />
                     </Button>
                     <Button
-                      size="icon"
+                      size="icon-lg"
                       variant="destructive"
-                      className="size-10 shrink-0 border-red-500/25 bg-red-500/12 text-red-100 hover:bg-red-500/18"
+                      className="size-14 shrink-0 rounded-[1.15rem] border-red-500/22 bg-[#5a2e28] text-red-100 hover:bg-[#6a342d]"
                       onClick={() => disconnectRealtime()}
                       title="Stop Realtime"
                     >
-                      <Square className="size-4" />
+                      <Square className="size-5" />
                     </Button>
                   </div>
                 </>
