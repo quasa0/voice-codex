@@ -1401,9 +1401,6 @@ export default function App() {
                         <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
                         {realtimeStatus}
                       </Badge>
-                      <Badge variant="outline" className={panelBadgeClass()}>
-                        {realtimeConnectedAt ? formatDuration(realtimeElapsedSeconds) : "--:--"}
-                      </Badge>
                       {realtimeLastError ? (
                         <Badge variant="outline" className="max-w-full border-red-500/20 bg-red-950/20 text-red-200">
                           {realtimeLastError}
@@ -1411,15 +1408,20 @@ export default function App() {
                       ) : null}
                     </div>
 
-                    <Button
-                      variant="destructive"
-                      className="h-8 rounded-full border border-red-500/22 bg-[#5a2e28] px-3 text-[13px] font-medium text-red-100 hover:bg-[#6a342d]"
-                      onClick={() => disconnectRealtime()}
-                      title="End call"
-                    >
-                      <PhoneOff className="size-4" />
-                      End call
-                    </Button>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[13px] font-medium text-zinc-500">
+                        {realtimeConnectedAt ? formatDuration(realtimeElapsedSeconds) : "--:--"}
+                      </span>
+                      <Button
+                        variant="destructive"
+                        className="h-8 rounded-full border border-red-400/35 bg-[#5a2e28] px-3 text-[13px] font-medium text-red-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:bg-[#6a342d]"
+                        onClick={() => disconnectRealtime()}
+                        title="End call"
+                      >
+                        <PhoneOff className="size-4" />
+                        End call
+                      </Button>
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-2 rounded-[1.1rem] border border-white/10 bg-[#1d2421] p-2 shadow-[0_14px_40px_rgba(0,0,0,0.26)]">
