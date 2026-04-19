@@ -21,6 +21,8 @@ JetBrains plugin that embeds the Realtime Agent + Codex app-server UI inside Web
 2. Run the plugin in a sandbox IDE:
 
    ```bash
+   export JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
+   export PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH"
    ./gradlew runIde
    ```
 
@@ -29,6 +31,10 @@ JetBrains plugin that embeds the Realtime Agent + Codex app-server UI inside Web
 The current plugin shell loads:
 
 `http://localhost:5173?embed=true`
+
+The Gradle build currently targets the locally installed WebStorm app at:
+
+`/Applications/WebStorm.app`
 
 That keeps the React app as the main UI while the JetBrains plugin acts as the IDE host shell.
 
