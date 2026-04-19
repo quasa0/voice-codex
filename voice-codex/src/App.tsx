@@ -740,11 +740,18 @@ function CodexConversationPanel({
   const workingLabel = getSegmentWorkingLabel(activeSegment);
   const statusLabel = getSegmentStatusLabel(activeSegment);
   const animateWorkingRow = activeSegment?.codexState === "running";
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    element.scrollTop = element.scrollHeight;
+  }, [messages, activeSegment?.id, activeSegment?.updatedAt]);
 
   return (
     <div className="flex h-full min-h-0 flex-col rounded-[1.55rem] border border-white/8 bg-[#171d1b] px-4 py-4">
-      <ScrollArea className="min-h-0 flex-1 pr-3">
-        <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-4"}>
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
+        <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col gap-4"}>
           {messages.length === 0 ? (
             <div className="flex min-h-full items-center justify-center text-center">
               <div className="max-w-md space-y-2 px-6">
@@ -823,16 +830,24 @@ function CodexConversationPanel({
             </div>
           ) : null}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
 
 function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    element.scrollTop = element.scrollHeight;
+  }, [messages]);
+
   return (
     <div className="flex h-full min-h-0 flex-col rounded-[1.55rem] border border-white/8 bg-[#171d1b] px-4 py-4">
-      <ScrollArea className="min-h-0 flex-1 pr-3">
-        <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-4"}>
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
+        <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col gap-4"}>
           {messages.length === 0 ? (
             <div className="flex min-h-full items-center justify-center text-center">
               <div className="max-w-md space-y-2 px-6">
@@ -892,7 +907,7 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
             ))
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
@@ -1572,12 +1587,21 @@ export default function App() {
                   </Badge>
                 </div>
 
-                <div
-                  aria-hidden="true"
-                  className="h-10 rounded-full px-4 opacity-0 pointer-events-none select-none"
+                <Button
+                  variant="destructive"
+                  className="h-8 rounded-full border border-red-400/35 bg-[#5a2e28] px-3 text-[13px] font-medium text-red-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:bg-[#6a342d] disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => {
+                    if (!thread || activeTurnStatus !== "running") return;
+                    void interruptTurn(thread.id).catch((error) => {
+                      setThreadError((error as Error).message);
+                    });
+                  }}
+                  disabled={!thread || activeTurnStatus !== "running"}
+                  title="Interrupt Codex"
                 >
-                  End call
-                </div>
+                  <TerminalSquare className="size-4" />
+                  Interrupt
+                </Button>
               </div>
 
               {status === "connected" ? (

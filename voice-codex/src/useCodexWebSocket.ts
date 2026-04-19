@@ -854,19 +854,11 @@ export function useCodexWebSocket() {
       }
 
       if (method === "item/commandExecution/outputDelta") {
-        const p = params as Record<string, unknown>;
-        const itemId = String(p.itemId ?? p.item_id ?? p.id ?? "");
-        const delta = String(p.delta ?? p.outputDelta ?? "");
         segmentId = resolveSegmentId(turnId);
-        appendStreamingProgressMessage(itemId, delta, turnId, "Command output", segmentId);
       }
 
       if (method === "item/fileChange/outputDelta") {
-        const p = params as Record<string, unknown>;
-        const itemId = String(p.itemId ?? p.item_id ?? p.id ?? "");
-        const delta = String(p.delta ?? p.outputDelta ?? "");
         segmentId = resolveSegmentId(turnId);
-        appendStreamingProgressMessage(itemId, delta, turnId, "File change", segmentId);
       }
 
       if (method === "item/completed") {
@@ -920,6 +912,16 @@ export function useCodexWebSocket() {
 
         if (item?.type === "fileChange") {
           noteSegmentFileChange(segmentId, item);
+          const editedPath = extractEditedPath(item);
+          appendCodexMessage({
+            id: `file-change-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            role: "assistant",
+            text: editedPath ? `Updated ${editedPath}` : "Updated files",
+            status: "final",
+            timestamp: nowTime(),
+            turnId,
+            segmentId: segmentId ?? null,
+          });
         }
       }
 
