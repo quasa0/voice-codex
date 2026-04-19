@@ -792,13 +792,11 @@ export default function App() {
     const replacement = queuedInterruptReplacementRef.current;
     queuedInterruptReplacementRef.current = null;
     pendingCodexNarrationRef.current = { request: replacement, turnId: null };
-    addSystemMessage("new turn", "start");
-    addRealtimeSystemMessage("new turn", "start");
 
     void startTurn(thread.id, replacement).catch((error) => {
       setThreadError((error as Error).message);
     });
-  }, [activeTurnStatus, addRealtimeSystemMessage, addSystemMessage, startTurn, thread]);
+  }, [activeTurnStatus, startTurn, thread]);
 
   useEffect(() => {
     if (activeTurnStatus !== "idle") return;
