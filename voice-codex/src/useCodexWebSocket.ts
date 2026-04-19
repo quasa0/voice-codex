@@ -94,9 +94,24 @@ function isCodexProgressMessage(text: string) {
   );
 }
 
+function messageLooksLikeStructuredOutput(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("```") || trimmed.includes("\n```")) return true;
+
+  const nonEmptyLines = trimmed.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (nonEmptyLines.length < 4) return false;
+
+  const structuredLineCount = nonEmptyLines.filter((line) =>
+    /^(?:#|[-*]|\d+\.|`{1,3}|[A-Za-z0-9_.-]+[\\/][A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+\s*$)/.test(line),
+  ).length;
+  return structuredLineCount >= Math.ceil(nonEmptyLines.length * 0.6);
+}
+
 function messageRequestsUserInput(text: string) {
   const trimmed = text.trim();
   if (!trimmed || isCodexProgressMessage(trimmed)) return false;
+  if (messageLooksLikeStructuredOutput(trimmed)) return false;
   if (trimmed.includes("?")) return true;
 
   const lowered = trimmed.toLowerCase();
@@ -500,6 +515,7 @@ export function useCodexWebSocket(options: UseCodexWebSocketOptions = {}) {
       activities: [],
       lastUserCheckInAt: null,
       lastRelayedActivityIndex: -1,
+      lastRelayedStatusSummary: null,
     };
 
     activeSegmentIdRef.current = segmentId;

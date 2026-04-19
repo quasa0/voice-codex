@@ -102,6 +102,7 @@ export interface CodexSegment {
   activities: CodexSegmentActivity[];
   lastUserCheckInAt: string | null;
   lastRelayedActivityIndex: number;
+  lastRelayedStatusSummary: string | null;
 }
 
 declare global {

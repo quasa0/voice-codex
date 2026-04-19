@@ -494,6 +494,10 @@ function capSpeechReply(text: string, maxLength = 80) {
   return text.slice(0, maxLength);
 }
 
+function normalizeRunningStatusSummary(text: string) {
+  return text.trim().replace(/[.!?]+$/g, "").toLowerCase();
+}
+
 function formatActivityFileLabel(summary: string, fallback: string | undefined) {
   const fileMatch =
     summary.match(/\b(?:Read(?:ing)?|Edited|Editing|Updated)\s+([^\n.]+)/i) ??
@@ -654,6 +658,8 @@ function buildExactCodexRelayReply(
   }
 
   if (segment.codexState === "running") {
+    const shortStatusText = summarizeRunningSegmentForSpeech(segment, segmentMessages);
+    const normalizedShortStatus = normalizeRunningStatusSummary(shortStatusText);
     if (asksAboutTiming) {
       if (latestCommandLooksLikeBuild(latestCommand)) {
         return "Hard to tell exactly. Codex is running a build right now.";
@@ -663,11 +669,15 @@ function buildExactCodexRelayReply(
       }
       return "Hard to tell exactly. Codex is still working.";
     }
-    if (segment.lastUserCheckInAt && unrelayedActivities.length === 0) {
-      const shortStatus = summarizeRunningSegmentForSpeech(segment, segmentMessages).replace(/\.$/, "");
+    if (
+      segment.lastUserCheckInAt &&
+      unrelayedActivities.length === 0 &&
+      segment.lastRelayedStatusSummary === normalizedShortStatus
+    ) {
+      const shortStatus = shortStatusText.replace(/\.$/, "");
       return `Still ${shortStatus.charAt(0).toLowerCase()}${shortStatus.slice(1)}, nothing new since you last asked.`.slice(0, 120);
     }
-    return summarizeRunningSegmentForSpeech(segment, segmentMessages);
+    return shortStatusText;
   }
 
   return summarizeSegmentStatus(segment, agentEvents);
@@ -822,10 +832,6 @@ function statusDotClass(status: string) {
   return "bg-[#c4c9cf]";
 }
 
-function panelBadgeClass() {
-  return "h-7 rounded-full border border-[#d9dde2] bg-[#f2f3f5] px-2.5 text-[11.5px] font-medium text-[#4f5661]";
-}
-
 function eventToneClass(method?: string) {
   if (!method) return "text-[#8a9099]";
   if (method.startsWith("turn/")) return "text-[#1f2328]";
@@ -861,35 +867,31 @@ function handoffEventClasses(kind?: "start" | "steer" | "interrupt" | "interrupt
   };
 }
 
-const REALTIME_WAVE_BARS = [0.34, 0.7, 1, 0.76, 0.42];
+const STATUS_PILL_BAR_LEVELS = [0.3, 0.6, 0.85, 1, 0.7];
+const STATUS_PILL_BAR_DELAYS = [0, 0.1, 0.2, 0.3, 0.4];
 
 function RealtimeWaveBars({
   isMuted,
   isActive,
-  compact = false,
 }: {
   isMuted: boolean;
   isActive: boolean;
-  compact?: boolean;
 }) {
-  const barWidth = compact ? 2.5 : 4;
-  const baseHeight = compact ? 12 : 64;
+  const active = isActive && !isMuted;
 
   return (
-    <div className={`flex items-center justify-center gap-[2px] ${compact ? "h-4" : "h-24"} w-full`}>
-      {REALTIME_WAVE_BARS.map((height, index) => {
-        const active = isActive && !isMuted;
-        const renderedHeight = active ? Math.max(5, Math.round(baseHeight * height)) : compact ? 5 : 12;
+    <div className="flex h-[14px] w-full items-end justify-center gap-[2px]">
+      {STATUS_PILL_BAR_LEVELS.map((height, index) => {
+        const renderedHeight = Math.max(4, Math.round(14 * (active ? height : 0.3)));
         return (
           <span
             key={`${index}-${height}`}
             className={`rounded-full ${active ? "bg-[#2fa860]" : "bg-[#c4c9cf]"}`}
             style={{
-              width: `${barWidth}px`,
+              width: "2px",
               height: `${renderedHeight}px`,
-              animation: active ? `realtime-wave 1.15s ease-in-out ${index * 0.08}s infinite` : "none",
-              boxShadow: active ? "0 0 0 2px rgba(47,168,96,0.22)" : "none",
-              transformOrigin: "center",
+              animation: active ? `status-pill-wave 1s ease-in-out ${STATUS_PILL_BAR_DELAYS[index]}s infinite` : "none",
+              transformOrigin: "bottom",
             }}
           />
         );
@@ -908,21 +910,27 @@ function RealtimeStatusBadge({
   const active = realtimeStatus === "active";
   const label =
     realtimeStatus === "active"
-      ? `voice ${isMuted ? "muted" : "live"}`
+      ? isMuted ? "Muted" : "Live"
       : realtimeStatus === "connecting"
-        ? "voice connecting"
+        ? "Connecting"
         : realtimeStatus === "requesting-mic"
-          ? "voice requesting mic"
-          : realtimeStatus === "error"
-            ? "voice error"
-            : "voice idle";
+          ? "Requesting Mic"
+          : "Off";
+  const labelClass =
+    realtimeStatus === "active"
+      ? isMuted
+        ? "font-medium text-[#c4c9cf]"
+        : "font-semibold text-[#2fa860]"
+      : realtimeStatus === "connecting" || realtimeStatus === "requesting-mic"
+        ? "font-medium text-[#c77a1b]"
+        : "font-medium text-[#4f5661]";
 
   return (
-    <div className="flex h-9 items-center gap-2 rounded-full border border-[#d9dde2] bg-white px-3 shadow-[0_1px_0_rgba(18,22,28,0.02)]">
+    <div className="flex h-9 w-[112px] items-center gap-2 rounded-full border border-transparent bg-white px-3 shadow-none">
       <div className="w-[28px]">
-        <RealtimeWaveBars isMuted={isMuted} isActive={active} compact />
+        <RealtimeWaveBars isMuted={isMuted} isActive={active} />
       </div>
-      <div className="text-[11.5px] font-medium leading-none text-[#4f5661]">{label}</div>
+      <div className={`text-[11.5px] leading-none ${labelClass}`}>{label}</div>
     </div>
   );
 }
@@ -931,35 +939,34 @@ function CodexStatusGlyph({ codexState }: { codexState: CodexSegmentState }) {
   const active = codexState === "running";
   const waiting = codexState === "waiting_for_user";
   const failed = codexState === "failed";
-  const bars = [0.34, 0.7, 1, 0.76, 0.42];
+  const completed = codexState === "completed";
 
   return (
-    <div className="flex w-[28px] items-center justify-center gap-[2px]">
-      {bars.map((height, index) => {
+    <div className="flex h-[14px] w-[28px] items-end justify-center gap-[2px]">
+      {STATUS_PILL_BAR_LEVELS.map((height, index) => {
         const barClass = failed
           ? "bg-[#c83f3f]"
           : waiting
             ? "bg-[#c77a1b]"
             : active
               ? "bg-[#2fa860]"
+              : completed
+                ? "bg-[#2fa860]"
               : "bg-[#c4c9cf]";
 
-        const renderedHeight = active ? Math.max(5, Math.round(12 * height)) : waiting ? Math.max(5, Math.round(10 * height)) : 5;
+        const renderedHeight = Math.max(4, Math.round(14 * (active ? height : 0.3)));
         return (
           <span
             key={`${index}-${height}`}
             className={`rounded-full ${barClass}`}
             style={{
-              width: "2.5px",
+              width: "2px",
               height: `${renderedHeight}px`,
               animation:
                 active
-                  ? `codex-status-wave 0.95s ease-in-out ${index * 0.07}s infinite`
-                  : waiting
-                    ? `codex-status-breathe 1.6s ease-in-out ${index * 0.1}s infinite`
+                  ? `status-pill-wave 1s ease-in-out ${STATUS_PILL_BAR_DELAYS[index]}s infinite`
                     : "none",
-              boxShadow: active ? "0 0 0 2px rgba(47,168,96,0.22)" : waiting ? "0 0 0 2px rgba(199,122,27,0.16)" : "none",
-              transformOrigin: "center",
+              transformOrigin: "bottom",
             }}
           />
         );
@@ -971,17 +978,17 @@ function CodexStatusGlyph({ codexState }: { codexState: CodexSegmentState }) {
 function CodexStatusBadge({ codexState }: { codexState: CodexSegmentState }) {
   const label =
     codexState === "waiting_for_user"
-      ? "codex waiting"
+      ? "Waiting"
       : codexState === "completed"
-        ? "codex complete"
+        ? "Complete"
         : codexState === "failed"
-          ? "codex failed"
+          ? "Failed"
           : codexState === "running"
-            ? "codex working"
-            : "codex idle";
+            ? "Working"
+            : "Idle";
 
   return (
-    <div className="flex h-9 items-center gap-2 rounded-full border border-[#d9dde2] bg-white px-3 shadow-[0_1px_0_rgba(18,22,28,0.02)]">
+    <div className="flex h-9 w-[112px] items-center gap-2 rounded-full border border-transparent bg-white px-3 shadow-none">
       <CodexStatusGlyph codexState={codexState} />
       <div className="text-[11.5px] font-medium leading-none text-[#4f5661]">{label}</div>
     </div>
@@ -1001,13 +1008,13 @@ function CodexWordmarkIcon() {
     <svg
       fill="currentColor"
       fillRule="evenodd"
-      viewBox="0 0 24 24"
+      viewBox="0 0 12 12"
       aria-hidden="true"
       className="size-4"
       style={{ flex: "none", lineHeight: 1 }}
     >
       <title>Codex</title>
-      <path clipRule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z" />
+      <path clipRule="evenodd" d="M4.04286 0.2285C4.52451 0.0305563 5.0488 -0.0408749 5.56586 0.0209996C6.23236 0.0974996 6.82636 0.381 7.34786 0.871C7.35488 0.877651 7.36344 0.882458 7.37278 0.884988C7.38212 0.887519 7.39194 0.887694 7.40136 0.8855C8.10536 0.7125 8.78236 0.7735 9.43186 1.0685L9.46336 1.0835L9.54036 1.1215C10.2189 1.473 10.7054 2.0065 10.9994 2.7205C11.1384 3.06 11.2084 3.4145 11.2099 3.7835C11.2197 4.05826 11.1893 4.33299 11.1199 4.599C11.1164 4.61256 11.1165 4.62676 11.12 4.6403C11.1235 4.65384 11.1303 4.66629 11.1399 4.6765C11.5329 5.07501 11.8063 5.57583 11.9289 6.122C12.1214 7.0725 11.9239 7.9295 11.3374 8.692L11.2464 8.802C10.8579 9.2468 10.3481 9.56847 9.77936 9.7275C9.76694 9.73108 9.75556 9.73757 9.74617 9.74645C9.73677 9.75532 9.72964 9.76631 9.72536 9.7785C9.59786 10.1465 9.46986 10.4605 9.23186 10.7745C8.63236 11.5655 7.75086 12.0055 6.75786 12C5.96636 11.996 5.26486 11.7065 4.65286 11.132C4.64358 11.1235 4.63225 11.1175 4.61998 11.1147C4.6077 11.1119 4.59491 11.1124 4.58286 11.116C4.32386 11.1995 4.06286 11.2115 3.78086 11.2085C3.33033 11.2049 2.88658 11.0985 2.48336 10.8975C2.0613 10.6882 1.6939 10.3832 1.41036 10.007C1.30886 9.8725 1.20836 9.746 1.13486 9.5965C1.03349 9.39043 0.95066 9.17575 0.887357 8.955C0.754446 8.45334 0.751521 7.9261 0.878857 7.423C0.882974 7.41113 0.884341 7.39848 0.882857 7.386C0.88038 7.37359 0.873877 7.36234 0.864357 7.354C0.556147 7.04224 0.320543 6.6663 0.174357 6.253C0.0775698 5.99853 0.0213841 5.73042 0.00785682 5.4585C-0.0163229 5.10044 0.0153902 4.7408 0.101857 4.3925C0.326857 3.6505 0.756357 3.0685 1.39036 2.646C1.53136 2.552 1.66536 2.479 1.79136 2.427C1.93436 2.367 2.07786 2.317 2.22186 2.275C2.23216 2.27195 2.24153 2.26637 2.24913 2.25877C2.25672 2.25117 2.2623 2.2418 2.26536 2.2315C2.37455 1.83899 2.56235 1.47275 2.81736 1.155C3.15736 0.731999 3.56586 0.423 4.04286 0.2285ZM3.64086 4.1535C3.58503 4.05583 3.49269 3.98435 3.38415 3.95476C3.27562 3.92518 3.15977 3.93992 3.06211 3.99575C2.96444 4.05158 2.89295 4.14392 2.86337 4.25245C2.83378 4.36099 2.84853 4.47683 2.90436 4.5745L3.75136 6.057L2.90736 7.481C2.85561 7.57749 2.84315 7.69024 2.87257 7.79571C2.902 7.90117 2.97104 7.99118 3.06526 8.04695C3.15949 8.10271 3.27162 8.11991 3.37823 8.09494C3.48484 8.06998 3.57768 8.0048 3.63736 7.913L4.60736 6.277C4.64561 6.21248 4.66609 6.13898 4.66671 6.06397C4.66732 5.98897 4.64805 5.91514 4.61086 5.85L3.64086 4.1535ZM6.36386 7.2735C6.25583 7.27993 6.15434 7.32737 6.08012 7.40614C6.00591 7.4849 5.96458 7.58903 5.96458 7.69725C5.96458 7.80547 6.00591 7.9096 6.08012 7.98836C6.15434 8.06712 6.25583 8.11457 6.36386 8.121H8.78786C8.89675 8.11571 8.99943 8.06873 9.07462 7.98979C9.14982 7.91086 9.19176 7.80602 9.19176 7.697C9.19176 7.58798 9.14982 7.48314 9.07462 7.40421C8.99943 7.32527 8.89675 7.27829 8.78786 7.273H6.36386V7.2735Z" />
     </svg>
   );
 }
@@ -1033,7 +1040,13 @@ function PanelShell({
         <div className="flex items-center justify-between gap-2.5">
           <div className="flex items-center gap-2.5">
             {icon ? (
-              <div className="flex size-6.5 items-center justify-center rounded-md border border-[#e1e4e8] bg-[#f2f3f5] text-[#1f2328]">
+              <div
+                className={`flex size-6.5 items-center justify-center rounded-md border ${
+                  title === "Codex"
+                    ? "border-[#3a4048] bg-[#3a4048] text-white"
+                    : "border-[#3a4048] bg-[#3a4048] text-white"
+                }`}
+              >
                 {icon}
               </div>
             ) : null}
@@ -1053,6 +1066,39 @@ function PanelShell({
       </CardHeader>
       <CardContent className={`!px-2.5 !py-1 ${contentClassName ?? ""}`.trim()}>{children}</CardContent>
     </Card>
+  );
+}
+
+function PaneStatusRow({
+  left,
+  right,
+}: {
+  left: React.ReactNode;
+  right: React.ReactNode;
+}) {
+  return (
+    <div className="flex h-9 items-center justify-between gap-2">
+      <div className="flex h-9 items-center gap-2">{left}</div>
+      <div className="flex h-9 w-[237px] items-center justify-end gap-2.5">{right}</div>
+    </div>
+  );
+}
+
+function PaneComposerRow({
+  leading,
+  input,
+  trailing,
+}: {
+  leading?: React.ReactNode;
+  input: React.ReactNode;
+  trailing?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 rounded-md bg-white">
+      {leading}
+      {input}
+      {trailing}
+    </div>
   );
 }
 
@@ -1925,6 +1971,15 @@ export default function App() {
             `priority=${relayPriority}; segment=${currentSegment?.id ?? "none"}; state=${currentSegment?.codexState ?? "idle"}; reply=${exactReply}`,
           );
           if (currentSegment) {
+            const runningStatusSummary =
+              currentSegment.codexState === "running"
+                ? normalizeRunningStatusSummary(
+                    summarizeRunningSegmentForSpeech(
+                      currentSegment,
+                      getSegmentMessages(codexMessages, currentSegment.id),
+                    ),
+                  )
+                : null;
             if (currentSegment.blockingQuestion) {
               setSegmentRelayState(currentSegment.id, "clarification_spoken");
             } else if (currentSegment.codexState === "running") {
@@ -1934,6 +1989,7 @@ export default function App() {
               ...seg,
               lastUserCheckInAt: formatNowLocal(0),
               lastRelayedActivityIndex: seg.activities.length - 1,
+              lastRelayedStatusSummary: runningStatusSummary,
             }));
           }
           sendRealtimeText(
@@ -2121,6 +2177,7 @@ export default function App() {
         ...seg,
         relayState: "completion_spoken",
         lastRelayedActivityIndex: seg.activities.length - 1,
+        lastRelayedStatusSummary: null,
       }));
     } catch (error) {
       console.error(error);
@@ -2203,17 +2260,9 @@ export default function App() {
           50% { opacity: 1; }
           100% { opacity: 0.18; }
         }
-        @keyframes realtime-wave {
-          0%, 100% { transform: scaleY(0.48); opacity: 0.86; }
-          50% { transform: scaleY(1.02); opacity: 1; }
-        }
-        @keyframes codex-status-wave {
-          0%, 100% { transform: scaleY(0.52); opacity: 0.82; }
-          50% { transform: scaleY(1.08); opacity: 1; }
-        }
-        @keyframes codex-status-breathe {
-          0%, 100% { transform: scaleY(0.82); opacity: 0.72; }
-          50% { transform: scaleY(1); opacity: 1; }
+        @keyframes status-pill-wave {
+          0%, 100% { transform: scaleY(.5); transform-origin: bottom; }
+          50% { transform: scaleY(1); transform-origin: bottom; }
         }
         @keyframes codex-working-dot {
           0%, 100% { transform: scale(0.92); opacity: 0.68; box-shadow: 0 0 0 rgba(47,168,96,0); }
@@ -2281,123 +2330,175 @@ export default function App() {
               title="Realtime Voice Agent"
               icon={<OpenAIWordmarkIcon />}
               headerRight={
-                <RealtimeStatusBadge isMuted={isMicMuted} realtimeStatus={realtimeStatus} />
+                <Badge
+                  className={`h-7 justify-end gap-1 rounded-full px-2.5 text-[11.5px] font-medium ${
+                    realtimeStatus === "active"
+                      ? "border-transparent bg-[#f2f6f4] text-[#2fa860] shadow-none"
+                      : realtimeStatus === "idle" || realtimeStatus === "error"
+                        ? "border-transparent bg-[#fbf1f1] text-[#c83f3f] shadow-none"
+                        : "border-transparent bg-[#fbefd9] text-[#c77a1b] shadow-none"
+                  }`}
+                >
+                  {realtimeStatus === "active" ? "On" : realtimeStatus === "idle" || realtimeStatus === "error" ? "Off" : realtimeStatus === "requesting-mic" ? "Requesting" : formatStatusLabel(realtimeStatus)}
+                  <span
+                    className={`size-1.5 rounded-full ${
+                      realtimeStatus === "active"
+                        ? "bg-[#2fa860]"
+                        : realtimeStatus === "idle" || realtimeStatus === "error"
+                          ? "bg-[#c83f3f]"
+                          : "bg-[#c77a1b]"
+                    }`}
+                  />
+                </Badge>
               }
               contentClassName={`flex flex-col gap-2 ${paneOnlyMode ? "min-h-0 h-full" : "min-h-[36rem]"}`}
             >
-              {realtimeStatus === "idle" || realtimeStatus === "error" ? (
-                <div className="flex min-h-[11rem] items-center justify-center">
-                  <Button
-                    size="lg"
-                    className="bg-[#2fa860] px-6 text-white hover:bg-[#258a4f]"
-                    onClick={() => void handleStartRealtime()}
-                  >
-                    <Play className="size-5" />
-                    Start Realtime Voice
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge className={`gap-2 ${panelBadgeClass()}`}>
-                        <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
-                        {formatStatusLabel(realtimeStatus)}
-                      </Badge>
-                      {realtimeLastError ? (
-                        <Badge variant="outline" className="max-w-full border-red-500/20 bg-red-950/20 text-red-200">
-                          {realtimeLastError}
-                        </Badge>
-                      ) : null}
-                    </div>
+              {(() => {
+                const realtimeCallOff = realtimeStatus === "idle" || realtimeStatus === "error";
+                const realtimeCanType = realtimeStatus === "active";
 
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-[11.5px] font-medium text-[#565c66]">
-                        {realtimeConnectedAt ? formatDuration(realtimeElapsedSeconds) : "--:--"}
-                      </span>
-                      <Button
-                        variant="outline"
-                        className="h-8 rounded-md border border-[#d3d7dc] bg-white px-3 text-[12px] font-medium text-[#1f2328] hover:bg-[#f2f3f5]"
-                        onClick={() => void handleClearChat()}
-                        title="Clear chat"
-                      >
-                        <Trash2 className="size-4" />
-                        Clear chat
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        className="h-8 rounded-md border border-[#e7c6c6] bg-[#fbf1f1] px-3 text-[12px] font-medium text-[#8a2a2a] hover:bg-[#f6e2e2]"
-                        onClick={() => {
-                          const nextIntent = { ...persistedReconnectIntentRef.current, shouldReconnectRealtime: false };
-                          persistedReconnectIntentRef.current = nextIntent;
-                          writeStoredJson(STORAGE_KEYS.reconnectIntent, nextIntent);
-                          disconnectRealtime();
-                        }}
-                        title="End call"
-                      >
-                        <PhoneOff className="size-4" />
-                        End call
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 rounded-md bg-white">
-                    <button
-                      type="button"
-                      className={`flex size-7.5 shrink-0 items-center justify-center rounded-md border transition ${
-                        !isMicMuted && realtimeStatus === "active"
-                          ? "border-[#c4e5d1] bg-[#e2f5ea] text-[#1e6b3f] shadow-[0_0_0_3px_rgba(47,168,96,0.18)]"
-                          : "border-[#d3d7dc] bg-white text-[#565c66] hover:bg-[#f2f3f5]"
-                      }`}
-                      onClick={toggleMicMuted}
-                      disabled={realtimeStatus !== "active"}
-                      title={isMicMuted ? "Unmute Mic" : "Mute Mic"}
-                    >
-                      {isMicMuted ? <MicOff className="size-4.5" /> : <Mic className="size-4.5" />}
-                    </button>
-                    <input
-                      ref={realtimeInputRef}
-                      value={realtimeText}
-                      onChange={(event) => setRealtimeText(event.target.value)}
-                      className="h-7.5 min-w-0 flex-1 rounded-md border border-[#d3d7dc] bg-white px-3 text-[13px] text-[#1f2328] outline-none transition placeholder:text-[#8a9099] focus:border-[#2fa860] focus:ring-2 focus:ring-[#2fa860]/20"
-                      placeholder="Type to the realtime session"
-                      onKeyDown={(event) => {
-                        if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
-                          event.preventDefault();
-                          handleSendRealtimeText();
-                        }
-                        if (event.key === "Escape") {
-                          setRealtimeText("");
-                        }
-                      }}
+                return (
+                  <>
+                    <PaneStatusRow
+                      left={
+                        <>
+                          {realtimeStatus === "active" ? (
+                            <RealtimeStatusBadge
+                              isMuted={isMicMuted}
+                              realtimeStatus={realtimeStatus}
+                            />
+                          ) : null}
+                          {realtimeLastError ? (
+                            <Badge variant="outline" className="max-w-full border-red-500/20 bg-red-950/20 text-red-200">
+                              {realtimeLastError}
+                            </Badge>
+                          ) : null}
+                        </>
+                      }
+                      right={
+                        <>
+                          {realtimeConnectedAt && realtimeStatus === "active" ? (
+                            <span className="text-[11.5px] font-medium text-[#565c66]">
+                              {formatDuration(realtimeElapsedSeconds)}
+                            </span>
+                          ) : null}
+                          <Button
+                            variant="outline"
+                            className="h-8 rounded-md border border-[#d3d7dc] bg-white px-3 text-[12px] font-medium text-[#1f2328] hover:bg-[#f2f3f5]"
+                            onClick={() => void handleClearChat()}
+                            title="Clear chat"
+                          >
+                            <Trash2 className="size-4" />
+                            Clear chat
+                          </Button>
+                          {realtimeCallOff ? (
+                            <Button
+                              className="h-8 w-[106px] rounded-md border border-[#c4e5d1] bg-[#eef8f2] px-3 text-[12px] font-medium text-[#1e6b3f] hover:bg-[#e2f5ea]"
+                              onClick={() => void handleStartRealtime()}
+                              title="Start call"
+                            >
+                              <Play className="size-4" />
+                              Start call
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="destructive"
+                              className="h-8 w-[106px] rounded-md border border-[#e7c6c6] bg-[#fbf1f1] px-3 text-[12px] font-medium text-[#8a2a2a] hover:bg-[#f6e2e2]"
+                              onClick={() => {
+                                const nextIntent = { ...persistedReconnectIntentRef.current, shouldReconnectRealtime: false };
+                                persistedReconnectIntentRef.current = nextIntent;
+                                writeStoredJson(STORAGE_KEYS.reconnectIntent, nextIntent);
+                                disconnectRealtime();
+                              }}
+                              title="End call"
+                            >
+                              <PhoneOff className="size-4" />
+                              End call
+                            </Button>
+                          )}
+                        </>
+                      }
                     />
-                    <button
-                      type="button"
-                      className="flex size-7.5 shrink-0 items-center justify-center rounded-md border border-[#d3d7dc] bg-white text-[#565c66] transition hover:bg-[#f2f3f5] disabled:cursor-not-allowed disabled:opacity-40"
-                      onClick={() => {
-                        try {
-                          skipAssistant();
-                        } catch (error) {
-                          console.error(error);
-                        }
-                      }}
-                      disabled={!isAssistantSpeaking}
-                      title="Skip assistant audio"
-                    >
-                      <SkipForward className="size-4" />
-                    </button>
-                    <button
-                      type="button"
-                      className="flex size-7.5 shrink-0 items-center justify-center rounded-md border border-[#d3d7dc] bg-white text-[#565c66] transition hover:bg-[#f2f3f5] disabled:cursor-not-allowed disabled:opacity-40"
-                      onClick={handleSendRealtimeText}
-                      disabled={realtimeStatus !== "active" || !realtimeText.trim()}
-                      title="Send Text"
-                    >
-                      <Send className="size-4" />
-                    </button>
-                  </div>
-                </>
-              )}
+
+                    <PaneComposerRow
+                      leading={
+                        <button
+                          type="button"
+                          className={`flex size-7.5 shrink-0 items-center justify-center rounded-md border transition ${
+                            !isMicMuted && realtimeCanType
+                              ? "border-[#c4e5d1] bg-[#e2f5ea] text-[#1e6b3f] shadow-[0_0_0_3px_rgba(47,168,96,0.18)]"
+                              : "border-[#d3d7dc] bg-[#f7f8fa] text-[#9aa1ab]"
+                          }`}
+                          onClick={toggleMicMuted}
+                          disabled={!realtimeCanType}
+                          title={isMicMuted ? "Unmute Mic" : "Mute Mic"}
+                        >
+                          {isMicMuted ? <MicOff className="size-4.5" /> : <Mic className="size-4.5" />}
+                        </button>
+                      }
+                      input={
+                        <input
+                          ref={realtimeInputRef}
+                          value={realtimeText}
+                          onChange={(event) => setRealtimeText(event.target.value)}
+                          className={`h-[30px] min-w-0 flex-1 rounded-md border px-3 text-[13px] outline-none transition placeholder:text-[#8a9099] ${
+                            realtimeCanType
+                              ? "border-[#d3d7dc] bg-white text-[#1f2328] focus:border-[#2fa860] focus:ring-2 focus:ring-[#2fa860]/20"
+                              : "border-[#d3d7dc] bg-[#f7f8fa] text-[#9aa1ab]"
+                          }`}
+                          placeholder="Type to the realtime session"
+                          disabled={!realtimeCanType}
+                          onKeyDown={(event) => {
+                            if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
+                              event.preventDefault();
+                              handleSendRealtimeText();
+                            }
+                            if (event.key === "Escape") {
+                              setRealtimeText("");
+                            }
+                          }}
+                        />
+                      }
+                      trailing={
+                        <>
+                          <button
+                            type="button"
+                            className={`flex size-7.5 shrink-0 items-center justify-center rounded-md border transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                              realtimeCanType
+                                ? "border-[#d3d7dc] bg-white text-[#565c66] hover:bg-[#f2f3f5]"
+                                : "border-[#d3d7dc] bg-[#f7f8fa] text-[#9aa1ab]"
+                            }`}
+                            onClick={() => {
+                              try {
+                                skipAssistant();
+                              } catch (error) {
+                                console.error(error);
+                              }
+                            }}
+                            disabled={!realtimeCanType || !isAssistantSpeaking}
+                            title="Skip assistant audio"
+                          >
+                            <SkipForward className="size-4" />
+                          </button>
+                          <button
+                            type="button"
+                            className={`flex size-7.5 shrink-0 items-center justify-center rounded-md border transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                              realtimeCanType
+                                ? "border-[#d3d7dc] bg-white text-[#565c66] hover:bg-[#f2f3f5]"
+                                : "border-[#d3d7dc] bg-[#f7f8fa] text-[#9aa1ab]"
+                            }`}
+                            onClick={handleSendRealtimeText}
+                            disabled={!realtimeCanType || !realtimeText.trim()}
+                            title="Send Text"
+                          >
+                            <Send className="size-4" />
+                          </button>
+                        </>
+                      }
+                    />
+                  </>
+                );
+              })()}
 
               {realtimeError ? (
                 <div className="rounded-2xl border border-red-500/20 bg-red-950/30 px-4 py-3 text-sm text-red-200">
@@ -2411,71 +2512,84 @@ export default function App() {
             <PanelShell
               title="Codex"
               icon={<CodexWordmarkIcon />}
-              headerRight={<CodexStatusBadge codexState={currentCodexState} />}
+              headerRight={
+                <Badge
+                  className={`h-7 justify-end gap-1 rounded-full px-2.5 text-[11.5px] font-medium ${
+                    status === "connected"
+                      ? "border-transparent bg-[#f2f6f4] text-[#2fa860] shadow-none"
+                      : status === "error"
+                        ? "border-transparent bg-[#fbf1f1] text-[#c83f3f] shadow-none"
+                        : "border-transparent bg-[#fbefd9] text-[#c77a1b] shadow-none"
+                  }`}
+                >
+                  {status === "connected" ? "Connected" : formatStatusLabel(status)}
+                  <span className={`size-1.5 rounded-full ${statusDotClass(status)}`} />
+                </Badge>
+              }
               contentClassName={`flex flex-col gap-2 ${paneOnlyMode ? "min-h-0 h-full" : "min-h-[36rem]"}`}
             >
-              <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge className={`gap-2 ${panelBadgeClass()}`}>
-                    <span className={`size-1.5 rounded-full ${statusDotClass(status)}`} />
-                    Codex {status}
-                  </Badge>
-                </div>
-
-                <Button
-                  variant="destructive"
-                  className="h-8 rounded-md border border-[#e7c6c6] bg-[#fbf1f1] px-3 text-[12px] font-medium text-[#8a2a2a] hover:bg-[#f6e2e2] disabled:cursor-not-allowed disabled:opacity-40"
-                  onClick={() => {
-                    if (!thread || activeTurnStatus !== "running") return;
-                    void interruptTurn(thread.id).catch((error) => {
-                      setThreadError((error as Error).message);
-                    });
-                  }}
-                  disabled={!thread || activeTurnStatus !== "running"}
-                  title="Interrupt Codex"
-                >
-                  <TerminalSquare className="size-4" />
-                  Interrupt
-                </Button>
-              </div>
+              <PaneStatusRow
+                left={<CodexStatusBadge codexState={status === "connected" ? currentCodexState : "idle"} />}
+                right={
+                  <Button
+                    variant="destructive"
+                    className="h-8 rounded-md border border-[#e7c6c6] bg-[#fbf1f1] px-3 text-[12px] font-medium text-[#8a2a2a] hover:bg-[#f6e2e2] disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => {
+                      if (!thread || activeTurnStatus !== "running") return;
+                      void interruptTurn(thread.id).catch((error) => {
+                        setThreadError((error as Error).message);
+                      });
+                    }}
+                    disabled={!thread || activeTurnStatus !== "running"}
+                    title="Interrupt Codex"
+                  >
+                    <TerminalSquare className="size-4" />
+                    Interrupt
+                  </Button>
+                }
+              />
 
               {status === "connected" ? (
                 <>
                   {thread ? (
-                    <div className="flex min-h-0 flex-1 flex-col gap-2">
-                      <div className="flex items-center gap-1.5 rounded-md bg-white">
-                        <input
-                          value={codexTaskText}
-                          onChange={(event) => setCodexTaskText(event.target.value)}
-                          className="h-7.5 min-w-0 flex-1 rounded-md border border-[#d3d7dc] bg-white px-3 text-[13px] text-[#1f2328] outline-none transition placeholder:text-[#8a9099] focus:border-[#2fa860] focus:ring-2 focus:ring-[#2fa860]/20"
-                          placeholder="Type to the Codex thread"
-                          onKeyDown={(event) => {
-                            if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
-                              event.preventDefault();
+                    <>
+                      <PaneComposerRow
+                        input={
+                          <input
+                            value={codexTaskText}
+                            onChange={(event) => setCodexTaskText(event.target.value)}
+                            className="h-[30px] min-w-0 flex-1 rounded-md border border-[#d3d7dc] bg-white px-3 text-[13px] text-[#1f2328] outline-none transition placeholder:text-[#8a9099] focus:border-[#2fa860] focus:ring-2 focus:ring-[#2fa860]/20"
+                            placeholder="Type to the Codex thread"
+                            onKeyDown={(event) => {
+                              if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
+                                event.preventDefault();
+                                void handleSendCodexTask();
+                              }
+                              if (event.key === "Escape") {
+                                setCodexTaskText("");
+                              }
+                            }}
+                          />
+                        }
+                        trailing={
+                          <button
+                            type="button"
+                            className="flex size-7.5 shrink-0 items-center justify-center rounded-md border border-[#d3d7dc] bg-white text-[#565c66] transition hover:bg-[#f2f3f5] disabled:cursor-not-allowed disabled:opacity-40"
+                            onClick={() => {
                               void handleSendCodexTask();
-                            }
-                            if (event.key === "Escape") {
-                              setCodexTaskText("");
-                            }
-                          }}
-                        />
-                        <button
-                          type="button"
-                          className="flex size-7.5 shrink-0 items-center justify-center rounded-md border border-[#d3d7dc] bg-white text-[#565c66] transition hover:bg-[#f2f3f5] disabled:cursor-not-allowed disabled:opacity-40"
-                          onClick={() => {
-                            void handleSendCodexTask();
-                          }}
-                          disabled={activeTurnStatus === "running" && !activeTurnId}
-                          title="Send Codex Task"
-                        >
-                          <Send className="size-4" />
-                        </button>
-                      </div>
+                            }}
+                            disabled={activeTurnStatus === "running" && !activeTurnId}
+                            title="Send Codex Task"
+                          >
+                            <Send className="size-4" />
+                          </button>
+                        }
+                      />
 
                       <div className="min-h-0 flex-1">
                         <CodexConversationPanel messages={codexMessages} activeSegment={currentSegment} />
                       </div>
-                    </div>
+                    </>
                   ) : (
                     <div className="rounded-md border border-[#e1e4e8] bg-[#f7f8fa] p-4 text-sm text-[#565c66]">
                       Preparing Codex connection, logging in with the server API key, and starting the project thread.
