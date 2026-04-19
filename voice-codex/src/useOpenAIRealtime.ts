@@ -312,7 +312,7 @@ export function useOpenAIRealtime() {
             setIsAssistantSpeaking(true);
           }
 
-          if (type === "output_audio_buffer.stopped" || type === "response.output_audio.done" || type === "response.done") {
+          if (type === "response.output_audio.done" || type === "response.done") {
             setIsAssistantSpeaking(false);
           }
 
