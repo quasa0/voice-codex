@@ -33,6 +33,7 @@ yarn-error.log*
 # local Codex workspace
 codex-project-space/*
 !codex-project-space/.gitkeep
+sample-webstorm-project/
 
 # TypeScript
 *.tsbuildinfo
