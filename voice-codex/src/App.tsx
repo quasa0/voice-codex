@@ -1,22 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  Activity,
-  Cable,
-  KeyRound,
-  MessageSquare,
-  Mic,
-  MicOff,
-  Play,
-  Radio,
-  RefreshCw,
-  Square,
-  TerminalSquare,
-  WandSparkles,
-} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Activity, Cable, Mic, MicOff, Play, Radio, Send, Square, TerminalSquare, WandSparkles } from "lucide-react";
 import { useCodexWebSocket } from "./useCodexWebSocket";
-import { useVoiceSession } from "./useVoiceSession";
 import { useOpenAIRealtime } from "./useOpenAIRealtime";
-import type { LogEntry, AgentEvent, ModelInfo } from "./types";
+import type { LogEntry, AgentEvent, ModelInfo, CodexMessage } from "./types";
+import { CODEX_PROJECT_CWD } from "./codexConfig";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,15 +14,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+
+const TERSE_AGENT_STYLE = [
+  "Terse like caveman. Technical substance exact. Only fluff die.",
+  "Drop: articles, filler (just/really/basically), pleasantries, hedging.",
+  "Fragments OK. Short synonyms. Code unchanged.",
+  "Pattern: [thing] [action] [reason]. [next step].",
+  "ACTIVE EVERY RESPONSE. No revert after many turns. No filler drift.",
+  "Code/commits/PRs: normal. Off: \"stop caveman\" / \"normal mode\".",
+].join(" ");
 
 const AGENT_METHODS_OF_INTEREST = new Set([
   "turn/started",
@@ -61,33 +49,74 @@ type RealtimeMessage = {
   id: string;
   role: "user" | "assistant";
   text: string;
-  status: "streaming" | "complete";
+  status: "capturing" | "partial" | "streaming" | "final";
   source: "voice" | "text" | "voice-pending";
   timestamp: string;
 };
 
+type CodexIntentAction = "chat_only" | "codex_start" | "codex_steer" | "codex_interrupt";
+type RoutedIntent = {
+  action: CodexIntentAction;
+  chat_mode: "normal" | "relay_latest_codex";
+  reason: string;
+};
+
+function formatDuration(totalSeconds: number) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return [hours, minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+  }
+  return [minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+}
+
+function formatLocalTime(timestamp: string) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return timestamp;
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function messagePhaseLabel(message: RealtimeMessage) {
+  if (message.role === "assistant") {
+    return message.status === "streaming" ? "streaming" : "final";
+  }
+  if (message.status === "capturing") return "capturing";
+  if (message.status === "partial") return "partial";
+  return "final";
+}
+
+function codexMessagePhaseLabel(message: CodexMessage) {
+  return message.status === "streaming" ? "streaming" : "final";
+}
+
 function statusBadgeClass(status: string) {
   if (status === "connected" || status === "active" || status === "apiKey") {
-    return "border-emerald-400/40 bg-emerald-500/12 text-emerald-200";
+    return "border-[#b9f075]/20 bg-[#b9f075]/10 text-[#d8f5ab]";
   }
   if (status === "connecting" || status === "requesting-mic") {
-    return "border-amber-400/40 bg-amber-500/12 text-amber-200";
+    return "border-[#b9f075]/15 bg-[#b9f075]/8 text-[#cbe998]";
   }
   if (status === "error") {
     return "border-red-400/40 bg-red-500/12 text-red-200";
   }
-  return "border-zinc-500/40 bg-zinc-500/10 text-zinc-300";
+  return "border-white/8 bg-black/12 text-zinc-300";
 }
 
 function statusDotClass(status: string) {
-  if (status === "connected" || status === "active" || status === "apiKey") return "bg-emerald-300";
-  if (status === "connecting" || status === "requesting-mic") return "bg-amber-300";
+  if (status === "connected" || status === "active" || status === "apiKey") return "bg-[#b9f075]";
+  if (status === "connecting" || status === "requesting-mic") return "bg-[#d0ef9e]";
   if (status === "error") return "bg-red-300";
   return "bg-zinc-400";
 }
 
 function controlSurfaceClass() {
-  return "bg-zinc-950/75 border-white/10 text-zinc-100 shadow-none";
+  return "rounded-xl border-white/10 bg-[#1f2724] text-zinc-100 shadow-none";
 }
 
 function eventToneClass(method?: string) {
@@ -114,18 +143,18 @@ function PanelShell({
   contentClassName?: string;
 }) {
   return (
-    <Card className="border-white/10 bg-zinc-900/72 shadow-xl shadow-black/20 backdrop-blur-sm">
+    <Card className="border-white/8 bg-[#1d2421]/92 shadow-2xl shadow-black/20 backdrop-blur-sm">
       <CardHeader className="space-y-1 pb-3">
         <div className="flex items-center gap-3">
           {icon ? (
-            <div className="flex size-7 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-zinc-100">
+            <div className="flex size-7 items-center justify-center rounded-xl border border-white/8 bg-white/[0.03] text-zinc-100">
               {icon}
             </div>
           ) : null}
           <div>
             <CardTitle className="text-[1.05rem] font-semibold tracking-tight text-zinc-50">{title}</CardTitle>
             {description ? (
-              <CardDescription className="text-sm leading-5 text-zinc-400">{description}</CardDescription>
+              <CardDescription className="text-sm leading-5 text-zinc-400/90">{description}</CardDescription>
             ) : null}
           </div>
         </div>
@@ -153,7 +182,7 @@ function JsonRpcLogPanel({ entries }: { entries: LogEntry[] }) {
             entries.map((entry) => (
               <div
                 key={entry.id}
-                className="rounded-lg border border-white/10 bg-zinc-950/80 p-3 font-mono text-xs text-zinc-300"
+                className="rounded-xl border border-white/8 bg-[#171d1b] p-3 font-mono text-xs text-zinc-300"
               >
                 <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-zinc-500">
                   <span>{entry.timestamp}</span>
@@ -191,7 +220,7 @@ function RealtimeLogPanel({ entries }: { entries: RealtimeLog[] }) {
             entries.map((entry) => (
               <div
                 key={entry.id}
-                className="rounded-lg border border-white/10 bg-zinc-950/80 p-3 font-mono text-xs text-zinc-300"
+                className="rounded-xl border border-white/8 bg-[#171d1b] p-3 font-mono text-xs text-zinc-300"
               >
                 <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-zinc-500">
                   <span>{entry.timestamp}</span>
@@ -237,7 +266,7 @@ function EventPanel({ events }: { events: AgentEvent[] }) {
             </div>
           ) : (
             filtered.map((event) => (
-              <div key={event.id} className="rounded-lg border border-white/10 bg-zinc-950/80 p-3">
+              <div key={event.id} className="rounded-xl border border-white/8 bg-[#171d1b] p-3">
                 <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-zinc-500">
                   <span>{event.timestamp}</span>
                   <span className={eventToneClass(event.method)}>{event.method}</span>
@@ -252,90 +281,110 @@ function EventPanel({ events }: { events: AgentEvent[] }) {
   );
 }
 
+function CodexConversationPanel({
+  messages,
+  turnStatus,
+}: {
+  messages: CodexMessage[];
+  turnStatus: "idle" | "running" | "error";
+}) {
+  return (
+    <Card className="border-white/8 bg-[#1d2421]/92 shadow-2xl shadow-black/20 backdrop-blur-sm">
+      <CardContent className="pt-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="text-sm font-medium text-zinc-100">Codex Conversation</div>
+          <Badge className={`gap-2 ${statusBadgeClass(turnStatus === "running" ? "active" : turnStatus)}`}>
+            <span
+              className={`size-1.5 rounded-full ${statusDotClass(turnStatus === "running" ? "active" : turnStatus)}`}
+            />
+            {turnStatus}
+          </Badge>
+        </div>
+        <ScrollArea className="h-[22rem] pr-3">
+          <div className="flex flex-col-reverse gap-1.5">
+            {messages.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-white/8 bg-white/[0.02] px-4 py-6 text-sm text-zinc-500">
+                No Codex messages yet.
+              </div>
+            ) : (
+              messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`border-b border-white/6 py-2 ${message.role === "assistant" ? "text-left" : "text-right"}`}
+                >
+                  <div className={`space-y-1 ${message.role === "assistant" ? "mr-12" : "ml-12"}`}>
+                    <div
+                      className={`flex flex-wrap gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] text-zinc-500 ${
+                        message.role === "assistant" ? "justify-start" : "justify-end"
+                      }`}
+                    >
+                      <span>{codexMessagePhaseLabel(message)}</span>
+                      <span>{formatLocalTime(message.timestamp)}</span>
+                    </div>
+                    <div className="whitespace-pre-wrap text-[13px] leading-5 text-zinc-100">
+                      {message.text || "..."}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </ScrollArea>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ConversationPanel({ messages }: { messages: RealtimeMessage[] }) {
   return (
-    <PanelShell
-      title="Realtime Conversation"
-      description="Voice and text messages flowing through OpenAI Realtime."
-      icon={<MessageSquare className="size-4" />}
-      contentClassName="pt-0"
-    >
-      <ScrollArea className="h-[26rem] pr-3">
-        <div className="space-y-1.5">
+    <div className="rounded-xl border border-white/8 bg-[#171d1b] p-3">
+      <ScrollArea className="h-[18rem] pr-3">
+        <div className="flex flex-col-reverse gap-1.5">
           {messages.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-sm text-zinc-500">
+            <div className="rounded-2xl border border-dashed border-white/8 bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
               No conversation messages yet.
             </div>
           ) : (
             messages.map((message) => (
               <div
                 key={message.id}
-                className={`grid gap-2 border-b border-white/6 py-2 ${
-                  message.role === "assistant" ? "grid-cols-[72px_minmax(0,1fr)]" : "grid-cols-[minmax(0,1fr)_72px]"
-                }`}
+                className={`border-b border-white/6 py-2 ${message.role === "assistant" ? "text-left" : "text-right"}`}
               >
-                {message.role === "assistant" ? (
-                  <>
-                    <div className="pt-0.5 text-right text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-                      <div className="text-zinc-300">Assistant</div>
-                      <div>{message.source}</div>
-                    </div>
-                    <div className="min-w-0">
-                      <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-zinc-600">
-                        <span>{message.status}</span>
-                        <span>{message.timestamp}</span>
-                      </div>
-                      <div className="whitespace-pre-wrap text-[13px] leading-5 text-zinc-100">
-                        {message.text || "..."}
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="min-w-0 text-right">
-                      <div className="mb-1 flex justify-end gap-2 text-[10px] uppercase tracking-[0.16em] text-zinc-600">
-                        <span>{message.timestamp}</span>
-                        <span>{message.status}</span>
-                      </div>
-                      <div className="whitespace-pre-wrap text-[13px] leading-5 text-zinc-100">
-                        {message.text || "..."}
-                      </div>
-                    </div>
-                    <div className="pt-0.5 text-left text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-                      <div className="text-zinc-300">User</div>
-                      <div>{message.source}</div>
-                    </div>
-                  </>
-                )}
+                <div className={`space-y-1 ${message.role === "assistant" ? "mr-12" : "ml-12"}`}>
+                  <div
+                    className={`flex flex-wrap gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] text-zinc-500 ${
+                      message.role === "assistant" ? "justify-start" : "justify-end"
+                    }`}
+                  >
+                    <span>{message.source}</span>
+                    <span>{messagePhaseLabel(message)}</span>
+                    <span>{formatLocalTime(message.timestamp)}</span>
+                  </div>
+                  <div className="whitespace-pre-wrap text-[13px] leading-5 text-zinc-100">
+                    {message.text || "..."}
+                  </div>
+                </div>
               </div>
             ))
           )}
         </div>
       </ScrollArea>
-    </PanelShell>
+    </div>
   );
 }
 
 function pickDefaultModel(models: ModelInfo[]) {
   const realtimeCandidate = models.find((model) => model.id.toLowerCase().includes("realtime"));
-  return realtimeCandidate?.id ?? models[0]?.id ?? "codex-mini-latest";
-}
-
-function voiceStatusColor(status: string) {
-  if (status === "active") return "text-white";
-  if (status === "error") return "text-red-300";
-  if (status === "connecting" || status === "requesting-mic") return "text-zinc-200";
-  return "text-zinc-400";
+  return realtimeCandidate?.id ?? models[0]?.id ?? "";
 }
 
 export default function App() {
-  const [wsUrl, setWsUrl] = useState("ws://localhost:3001?target=ws://127.0.0.1:3000");
-  const [cwd, setCwd] = useState("/tmp");
-  const [selectedModel, setSelectedModel] = useState("codex-mini-latest");
+  const [wsUrl] = useState("ws://localhost:3001?target=ws://127.0.0.1:3000");
+  const [selectedModel, setSelectedModel] = useState("");
   const [realtimeText, setRealtimeText] = useState("");
-  const [apiKey, setApiKey] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
+  const [codexTaskText, setCodexTaskText] = useState("");
 
   const {
     status,
@@ -345,37 +394,72 @@ export default function App() {
     models,
     account,
     connect,
-    disconnect,
-    send,
     startThread,
-    listModels,
     readAccount,
-    loginWithApiKey,
-    logout,
+    codexMessages,
+    activeTurnStatus,
+    activeTurnId,
+    startTurn,
+    steerTurn,
+    interruptTurn,
   } = useCodexWebSocket();
 
   const {
     status: realtimeStatus,
     error: realtimeError,
+    lastError: realtimeLastError,
     logs: realtimeLogs,
     messages: realtimeMessages,
     isMicMuted,
+    connectedAt: realtimeConnectedAt,
+    elapsedSeconds: realtimeElapsedSeconds,
     connect: connectRealtime,
     disconnect: disconnectRealtime,
+    requestResponse: requestRealtimeResponse,
     sendText: sendRealtimeText,
     toggleMicMuted,
   } = useOpenAIRealtime();
 
   const sdpHandlerRef = useRef<((sdp: string) => void) | null>(null);
+  const realtimeInputRef = useRef<HTMLInputElement | null>(null);
   const prevEventCount = useRef(0);
+  const lastHandledRealtimeMessageIdRef = useRef<string | null>(null);
+  const routeCacheRef = useRef(new Map<string, RoutedIntent>());
+  const queuedInterruptReplacementRef = useRef<string | null>(null);
+  const pendingCodexNarrationRef = useRef<{ request: string; turnId?: string | null } | null>(null);
+  const lastNarratedCodexMessageIdRef = useRef<string | null>(null);
+  const codexBootstrapAttemptedRef = useRef(false);
+  const realtimeBootstrapAttemptedRef = useRef(false);
   const [threadError, setThreadError] = useState<string | null>(null);
 
-  const onSdpNotification = useCallback((handler: (sdp: string) => void) => {
-    sdpHandlerRef.current = handler;
-    return () => {
-      sdpHandlerRef.current = null;
-    };
-  }, []);
+  const routeIntent = async (message: string, codexRunning: boolean): Promise<RoutedIntent> => {
+    const latestCodexReply = [...codexMessages]
+      .reverse()
+      .find((entry) => entry.role === "assistant" && entry.status === "final");
+    const recentConversation = realtimeMessages
+      .slice(-6)
+      .map((entry) => ({ role: entry.role, text: entry.text }));
+
+    const response = await fetch("/__intent/route", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message,
+        codexRunning,
+        latestCodexReply: latestCodexReply?.text ?? null,
+        recentConversation,
+      }),
+    });
+
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(text || `Intent routing failed (${response.status})`);
+    }
+
+    return JSON.parse(text) as RoutedIntent;
+  };
 
   if (agentEvents.length !== prevEventCount.current) {
     prevEventCount.current = agentEvents.length;
@@ -386,12 +470,6 @@ export default function App() {
     }
   }
 
-  const { voiceStatus, error: voiceError, startVoice, stopVoice } = useVoiceSession({
-    send: send as (method: string, params?: unknown) => Promise<unknown>,
-    threadId: thread?.id ?? "",
-    onSdpNotification,
-  });
-
   useEffect(() => {
     if (models.length === 0) return;
     if (!models.some((model) => model.id === selectedModel)) {
@@ -399,30 +477,22 @@ export default function App() {
     }
   }, [models, selectedModel]);
 
-  const handleConnect = () => connect(wsUrl);
-
   const handleApiKeyLogin = async () => {
-    const trimmed = apiKey.trim();
-    if (!trimmed) {
-      setAuthError("Enter an OpenAI API key first.");
-      return;
-    }
     setAuthBusy(true);
     setAuthError(null);
     try {
-      await loginWithApiKey(trimmed);
-    } catch (error) {
-      setAuthError((error as Error).message);
-    } finally {
-      setAuthBusy(false);
-    }
-  };
-
-  const handleLogout = async () => {
-    setAuthBusy(true);
-    setAuthError(null);
-    try {
-      await logout();
+      const response = await fetch("/__codex_app_server/account/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ wsUrl }),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(text || `Failed to log into Codex app-server (${response.status})`);
+      }
+      await readAccount();
     } catch (error) {
       setAuthError((error as Error).message);
     } finally {
@@ -432,8 +502,11 @@ export default function App() {
 
   const handleStartThread = async () => {
     setThreadError(null);
+    if (!selectedModel) {
+      throw new Error("No valid Codex model loaded yet.");
+    }
     try {
-      await startThread(cwd, selectedModel);
+      await startThread(CODEX_PROJECT_CWD, selectedModel);
     } catch (error) {
       setThreadError((error as Error).message);
     }
@@ -444,7 +517,7 @@ export default function App() {
       model: "gpt-realtime",
       voice: "marin",
       instructions:
-        "You are a helpful voice coding assistant. Speak only in English unless the user explicitly asks for another language. Keep answers concise and wait until the user finishes speaking before replying.",
+        `You are voice coding assistant inside an already-open software project. Project workspace already known and connected to Codex. Do not ask user for repo name, folder, project structure, or what files exist unless truly impossible. For requests about files, codebase structure, repo contents, implementation details, or inspection, default to delegating to Codex. Do not claim you already queried Codex unless frontend actually dispatched Codex work. If delegation not yet confirmed, say brief handoff like "Checking Codex now." Use user only for product intent, ambiguity, or preference decisions. Speak only English unless user explicitly asks another language. Wait until user finishes speaking before replying. ${TERSE_AGENT_STYLE}`,
     });
   };
 
@@ -452,27 +525,209 @@ export default function App() {
     const text = realtimeText.trim();
     if (!text) return;
     try {
-      sendRealtimeText(text);
+      sendRealtimeText(text, { requestResponse: false, visible: true });
       setRealtimeText("");
     } catch (error) {
       console.error(error);
     }
   };
 
+  useEffect(() => {
+    if (realtimeStatus !== "active") return;
+    const timeout = window.setTimeout(() => {
+      realtimeInputRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [realtimeStatus]);
+
+  useEffect(() => {
+    if (realtimeBootstrapAttemptedRef.current) return;
+    if (realtimeStatus !== "idle") return;
+    realtimeBootstrapAttemptedRef.current = true;
+    void handleStartRealtime().catch((error) => {
+      console.error(error);
+    });
+  }, [realtimeStatus]);
+
+  useEffect(() => {
+    if (codexBootstrapAttemptedRef.current) return;
+    codexBootstrapAttemptedRef.current = true;
+    connect(wsUrl);
+  }, [connect, wsUrl]);
+
+  useEffect(() => {
+    if (status !== "connected") return;
+    if (account?.type === "apiKey") return;
+    if (authBusy) return;
+    void handleApiKeyLogin();
+  }, [account?.type, authBusy, status]);
+
+  useEffect(() => {
+    if (status !== "connected") return;
+    if (account?.type !== "apiKey") return;
+    if (thread) return;
+    if (threadError) return;
+    if (models.length === 0) return;
+    if (!selectedModel) return;
+    void handleStartThread();
+  }, [account?.type, models.length, selectedModel, status, thread, threadError]);
+
+  useEffect(() => {
+    const latestFinalUserMessage = [...realtimeMessages]
+      .reverse()
+      .find((message) => message.role === "user" && message.status === "final");
+
+    if (!latestFinalUserMessage) return;
+    if (lastHandledRealtimeMessageIdRef.current === latestFinalUserMessage.id) return;
+
+    lastHandledRealtimeMessageIdRef.current = latestFinalUserMessage.id;
+
+    const dispatch = async () => {
+      let routed = routeCacheRef.current.get(latestFinalUserMessage.id);
+      if (!routed) {
+        routed = await routeIntent(latestFinalUserMessage.text, activeTurnStatus === "running");
+        routeCacheRef.current.set(latestFinalUserMessage.id, routed);
+      }
+
+      if (routed.action === "chat_only") {
+        if (routed.chat_mode === "relay_latest_codex") {
+          const latestCodexReply = [...codexMessages]
+            .reverse()
+            .find((message) => message.role === "assistant" && message.status === "final");
+          if (latestCodexReply) {
+            sendRealtimeText(
+              `Codex result available. Relay exact substance to user. No invention. Be terse.\n\nUser asked: ${latestFinalUserMessage.text}\n\nCodex result:\n${latestCodexReply.text}`,
+              { requestResponse: true, visible: false },
+            );
+            return;
+          }
+        }
+
+        requestRealtimeResponse();
+        return;
+      }
+
+      if (status !== "connected") return;
+      setThreadError(null);
+
+      let activeThread = thread;
+      if (!activeThread) {
+        if (!selectedModel) throw new Error("No valid Codex model loaded yet.");
+        activeThread = await startThread(CODEX_PROJECT_CWD, selectedModel);
+      }
+
+      if (routed.action === "codex_interrupt" && activeTurnStatus === "running") {
+        queuedInterruptReplacementRef.current = latestFinalUserMessage.text;
+        pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, turnId: activeTurnId };
+        await interruptTurn(activeThread.id);
+        return;
+      }
+
+      if (routed.action === "codex_steer" && activeTurnStatus === "running" && activeTurnId) {
+        pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, turnId: activeTurnId };
+        await steerTurn(activeThread.id, latestFinalUserMessage.text);
+        return;
+      }
+
+      if (activeTurnStatus === "idle") {
+        pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, turnId: null };
+        await startTurn(activeThread.id, latestFinalUserMessage.text);
+      }
+    };
+
+    void dispatch().catch((error) => {
+      setThreadError((error as Error).message);
+    });
+  }, [
+    activeTurnId,
+    activeTurnStatus,
+    codexMessages,
+    interruptTurn,
+    realtimeMessages,
+    requestRealtimeResponse,
+    selectedModel,
+    sendRealtimeText,
+    startThread,
+    startTurn,
+    status,
+    steerTurn,
+    thread,
+  ]);
+
+  useEffect(() => {
+    if (activeTurnStatus !== "idle" || !thread || !queuedInterruptReplacementRef.current) return;
+
+    const replacement = queuedInterruptReplacementRef.current;
+    queuedInterruptReplacementRef.current = null;
+    pendingCodexNarrationRef.current = { request: replacement, turnId: null };
+
+    void startTurn(thread.id, replacement).catch((error) => {
+      setThreadError((error as Error).message);
+    });
+  }, [activeTurnStatus, startTurn, thread]);
+
+  useEffect(() => {
+    if (activeTurnStatus !== "idle") return;
+    if (!pendingCodexNarrationRef.current) return;
+
+    const latestCodexReply = [...codexMessages]
+      .reverse()
+      .find((message) => message.role === "assistant" && message.status === "final");
+
+    if (!latestCodexReply) return;
+    if (lastNarratedCodexMessageIdRef.current === latestCodexReply.id) return;
+
+    const pending = pendingCodexNarrationRef.current;
+    pendingCodexNarrationRef.current = null;
+    lastNarratedCodexMessageIdRef.current = latestCodexReply.id;
+
+    try {
+      sendRealtimeText(
+        `Codex finished. Relay result to user. Use only Codex result. No invention. If short, keep short. If list, read compactly.\n\nOriginal user request:\n${pending.request}\n\nCodex result:\n${latestCodexReply.text}`,
+        { requestResponse: true, visible: false },
+      );
+    } catch (error) {
+      console.error(error);
+    }
+  }, [activeTurnStatus, codexMessages, sendRealtimeText]);
+
+  const handleSendCodexTask = async () => {
+    const task = codexTaskText.trim();
+    if (!task) return;
+    if (status !== "connected") {
+      setThreadError("Connect Codex app-server first.");
+      return;
+    }
+
+    setThreadError(null);
+
+    try {
+      let activeThread = thread;
+      if (!activeThread) {
+        if (!selectedModel) throw new Error("No valid Codex model loaded yet.");
+        activeThread = await startThread(CODEX_PROJECT_CWD, selectedModel);
+      }
+      await startTurn(activeThread.id, task);
+      setCodexTaskText("");
+    } catch (error) {
+      setThreadError((error as Error).message);
+    }
+  };
+
   return (
     <div className="dark min-h-screen bg-transparent text-zinc-50">
-      <div className="mx-auto flex max-w-[1500px] flex-col gap-4 px-3 py-3 sm:px-5 lg:px-6">
-        <Card className="overflow-hidden border-white/10 bg-zinc-900/72 shadow-xl shadow-black/20">
-          <CardContent className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="mx-auto flex max-w-[1180px] flex-col gap-4 px-3 py-4 sm:px-5 lg:px-6">
+        <Card className="overflow-hidden border-white/8 bg-[#1b221f]/96 shadow-xl shadow-black/20">
+          <CardContent className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="max-w-3xl space-y-3">
-              <Badge variant="outline" className="border-white/12 bg-white/[0.04] text-zinc-300">
+              <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-zinc-300">
                 Shack15 Hackathon Build
               </Badge>
               <div className="space-y-1.5">
-                <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl lg:text-[2.35rem]">
+                <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl lg:text-[2.1rem]">
                   Voice Codex
                 </h1>
-                <p className="max-w-2xl text-sm leading-6 text-zinc-400">
+                <p className="max-w-2xl text-sm leading-6 text-zinc-400/90">
                   A dark realtime control room for OpenAI voice sessions and local Codex threads. The voice lane is live today,
                   and the Codex lane stays intact for the next step: wiring spoken intent into local coding workflows.
                 </p>
@@ -480,21 +735,21 @@ export default function App() {
             </div>
 
             <div className="grid w-full max-w-md gap-2 sm:grid-cols-3 lg:pt-1">
-              <div className="rounded-lg border border-white/12 bg-white/[0.04] p-3">
+              <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
                 <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-zinc-300">Codex WS</div>
                 <Badge className={`gap-2 ${statusBadgeClass(status)}`}>
                   <span className={`size-1.5 rounded-full ${statusDotClass(status)}`} />
                   {status}
                 </Badge>
               </div>
-              <div className="rounded-lg border border-white/12 bg-white/[0.04] p-3">
+              <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
                 <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-zinc-300">Realtime</div>
                 <Badge className={`gap-2 ${statusBadgeClass(realtimeStatus)}`}>
                   <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
                   {realtimeStatus}
                 </Badge>
               </div>
-              <div className="rounded-lg border border-white/12 bg-white/[0.04] p-3">
+              <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
                 <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-zinc-300">Auth</div>
                 <Badge className={`gap-2 ${statusBadgeClass(account?.type ?? "unknown")}`}>
                   <span className={`size-1.5 rounded-full ${statusDotClass(account?.type ?? "unknown")}`} />
@@ -513,66 +768,93 @@ export default function App() {
               icon={<WandSparkles className="size-4" />}
               contentClassName="space-y-4"
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge className={`gap-2 ${statusBadgeClass(realtimeStatus)}`}>
-                  <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
-                  Realtime: {realtimeStatus}
-                </Badge>
-                <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
-                  {isMicMuted ? "Mic muted" : "Mic live"}
-                </Badge>
-                <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
-                  gpt-realtime
-                </Badge>
-                <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
-                  marin
-                </Badge>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                {realtimeStatus === "active" || realtimeStatus === "connecting" || realtimeStatus === "requesting-mic" ? (
-                  <>
-                    <Button className="bg-zinc-100 text-zinc-950 hover:bg-white" onClick={toggleMicMuted} disabled={realtimeStatus !== "active"}>
-                      {isMicMuted ? <Mic className="size-4" /> : <MicOff className="size-4" />}
-                      {isMicMuted ? "Unmute Mic" : "Mute Mic"}
-                    </Button>
-                    <Button variant="destructive" className="border-red-500/25 bg-red-500/12 text-red-100 hover:bg-red-500/18" onClick={() => disconnectRealtime()}>
-                      <Square className="size-4" />
-                      Stop Realtime
-                    </Button>
-                  </>
-                ) : (
-                  <Button className="bg-zinc-100 text-zinc-950 hover:bg-white" onClick={() => void handleStartRealtime()}>
-                    <Play className="size-4" />
+              {realtimeStatus === "idle" || realtimeStatus === "error" ? (
+                <div className="flex min-h-[11rem] items-center justify-center">
+                  <Button
+                    size="lg"
+                    className="bg-[#b9f075] px-6 text-[#213024] hover:bg-[#c9f589]"
+                    onClick={() => void handleStartRealtime()}
+                  >
+                    <Play className="size-5" />
                     Start Realtime Voice
                   </Button>
-                )}
-              </div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge className={`gap-2 ${statusBadgeClass(realtimeStatus)}`}>
+                      <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
+                      {realtimeStatus}
+                    </Badge>
+                    <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
+                      {isMicMuted ? "muted" : "live"}
+                    </Badge>
+                    <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
+                      {realtimeConnectedAt ? formatDuration(realtimeElapsedSeconds) : "--:--"}
+                    </Badge>
+                    {realtimeLastError ? (
+                      <Badge variant="outline" className="max-w-full border-red-500/20 bg-red-950/20 text-red-200">
+                        {realtimeLastError}
+                      </Badge>
+                    ) : null}
+                  </div>
 
-              <div className="flex flex-col gap-3">
-                <Input
-                  value={realtimeText}
-                  onChange={(event) => setRealtimeText(event.target.value)}
-                  className={controlSurfaceClass()}
-                  placeholder="Send text into the realtime session"
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      handleSendRealtimeText();
-                    }
-                  }}
-                />
-                <Button variant="outline" className="border-white/12 bg-zinc-950/55 text-zinc-100 hover:bg-zinc-900" onClick={handleSendRealtimeText} disabled={realtimeStatus !== "active"}>
-                  <MessageSquare className="size-4" />
-                  Send Text
-                </Button>
-              </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="icon"
+                      className="size-10 shrink-0 bg-[#b9f075] text-[#213024] hover:bg-[#c9f589]"
+                      onClick={toggleMicMuted}
+                      disabled={realtimeStatus !== "active"}
+                      title={isMicMuted ? "Unmute Mic" : "Mute Mic"}
+                    >
+                      {isMicMuted ? <Mic className="size-4" /> : <MicOff className="size-4" />}
+                    </Button>
+                    <Input
+                      ref={realtimeInputRef}
+                      value={realtimeText}
+                      onChange={(event) => setRealtimeText(event.target.value)}
+                      className={`flex-1 ${controlSurfaceClass()}`}
+                      placeholder="Type to the realtime session"
+                      onKeyDown={(event) => {
+                        if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
+                          event.preventDefault();
+                          handleSendRealtimeText();
+                        }
+                        if (event.key === "Escape") {
+                          setRealtimeText("");
+                        }
+                      }}
+                    />
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      className="size-10 shrink-0 border-white/10 bg-[#1b221f] text-zinc-100 hover:bg-[#222b27]"
+                      onClick={handleSendRealtimeText}
+                      disabled={realtimeStatus !== "active"}
+                      title="Send Text"
+                    >
+                      <Send className="size-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="destructive"
+                      className="size-10 shrink-0 border-red-500/25 bg-red-500/12 text-red-100 hover:bg-red-500/18"
+                      onClick={() => disconnectRealtime()}
+                      title="Stop Realtime"
+                    >
+                      <Square className="size-4" />
+                    </Button>
+                  </div>
+                </>
+              )}
 
               {realtimeError ? (
                 <div className="rounded-2xl border border-red-500/20 bg-red-950/30 px-4 py-3 text-sm text-red-200">
                   {realtimeError}
                 </div>
               ) : null}
+
+              <ConversationPanel messages={realtimeMessages} />
             </PanelShell>
 
             <PanelShell
@@ -586,145 +868,64 @@ export default function App() {
                   <span className={`size-1.5 rounded-full ${statusDotClass(status)}`} />
                   Codex: {status}
                 </Badge>
-                {account?.type ? <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-200">Auth: {account.type}</Badge> : null}
-              </div>
-
-              <div className="flex flex-col gap-3">
-                <Input
-                  value={wsUrl}
-                  onChange={(event) => setWsUrl(event.target.value)}
-                  className={`${controlSurfaceClass()} font-mono`}
-                  placeholder="ws://localhost:3001?target=ws://127.0.0.1:3000"
-                />
-                {status === "disconnected" || status === "error" ? (
-                  <Button className="bg-zinc-100 text-zinc-950 hover:bg-white" onClick={handleConnect}>
-                    <Cable className="size-4" />
-                    Connect
-                  </Button>
+                {account?.type ? (
+                  <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-200">
+                    Auth: {account.type}
+                  </Badge>
+                ) : null}
+                {thread ? (
+                  <Badge variant="outline" className="border-[#b9f075]/20 bg-[#b9f075]/10 text-[#d8f5ab]">
+                    Thread ready
+                  </Badge>
                 ) : (
-                  <Button variant="outline" className="border-white/12 bg-zinc-950/55 text-zinc-100 hover:bg-zinc-900" onClick={disconnect}>
-                    <Square className="size-4" />
-                    Disconnect
-                  </Button>
+                  <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
+                    Bootstrapping…
+                  </Badge>
                 )}
               </div>
 
               {status === "connected" ? (
                 <>
-                  <Separator className="bg-white/10" />
-
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-200">
-                        Auth: {account?.type ?? "unknown"}
-                      </Badge>
-                      {account?.email ? (
-                        <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
-                          {account.email}
-                        </Badge>
-                      ) : null}
-                      {account?.orgName ? (
-                        <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
-                          {account.orgName}
-                        </Badge>
-                      ) : null}
-                    </div>
-
-                    <div className="grid gap-3">
-                      <Input
-                        type="password"
-                        value={apiKey}
-                        onChange={(event) => setApiKey(event.target.value)}
-                        className={controlSurfaceClass()}
-                        placeholder="OpenAI API key for account/login/start"
-                      />
-                      <div className="flex flex-wrap gap-2">
-                        <Button className="bg-white text-black hover:bg-zinc-200" onClick={() => void handleApiKeyLogin()} disabled={authBusy}>
-                          <KeyRound className="size-4" />
-                          {authBusy ? "Working..." : "Use API Key"}
-                        </Button>
-                        <Button variant="outline" className="border-white/20 bg-zinc-900 text-zinc-100 hover:bg-zinc-800" onClick={() => void readAccount()}>
-                          <RefreshCw className="size-4" />
-                          Refresh Account
-                        </Button>
-                        <Button variant="destructive" onClick={() => void handleLogout()} disabled={authBusy}>
-                          Logout
-                        </Button>
-                      </div>
-                    </div>
-
-                    <p className="text-sm leading-7 text-zinc-400">
-                      This logs the current app-server session into API-key mode through{" "}
-                      <code className="text-zinc-200">account/login/start</code>.
-                    </p>
-                  </div>
-
-                  <Separator className="bg-white/10" />
-
-                  {!thread ? (
+                  {thread ? (
                     <div className="space-y-4">
-                      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                        <Select value={selectedModel} onValueChange={setSelectedModel}>
-                          <SelectTrigger className={`w-full ${controlSurfaceClass()}`}>
-                            <SelectValue placeholder="Codex model" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {(models.length === 0 ? [{ id: selectedModel }] : models).map((model) => (
-                              <SelectItem key={model.id} value={model.id}>
-                                {model.id}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Button variant="outline" className="border-white/20 bg-zinc-900 text-zinc-100 hover:bg-zinc-800" onClick={() => void listModels()}>
-                          <RefreshCw className="size-4" />
-                          Refresh
-                        </Button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className="border-[#b9f075]/20 bg-[#b9f075]/10 text-[#d8f5ab]">
+                          Voice bridge active
+                        </Badge>
+                        <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
+                          Turn: {activeTurnStatus}
+                        </Badge>
                       </div>
 
-                      <p className="text-sm leading-7 text-zinc-400">
-                        {models.some((model) => model.id.toLowerCase().includes("realtime"))
-                          ? "A realtime-looking model was found. If Codex voice still fails, start a new thread with a different model."
-                          : "No obvious realtime model is listed by app-server. That matches the current known limitation in the Codex lane."}
-                      </p>
-
-                      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                        <Input
-                          value={cwd}
-                          onChange={(event) => setCwd(event.target.value)}
-                          className={`${controlSurfaceClass()} font-mono`}
-                          placeholder="Working directory"
-                        />
-                        <Button className="bg-white text-black hover:bg-zinc-200" onClick={handleStartThread}>
-                          <Play className="size-4" />
-                          Start Thread
-                        </Button>
+                      <div className="space-y-2">
+                        <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Manual Codex Task</div>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            value={codexTaskText}
+                            onChange={(event) => setCodexTaskText(event.target.value)}
+                            className={controlSurfaceClass()}
+                            placeholder="Fallback: send a direct task to Codex"
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                void handleSendCodexTask();
+                              }
+                            }}
+                          />
+                          <Button
+                            className="shrink-0 bg-[#b9f075] text-[#213024] hover:bg-[#c9f589]"
+                            onClick={() => void handleSendCodexTask()}
+                            disabled={activeTurnStatus === "running" && !activeTurnId}
+                          >
+                            <Send className="size-4" />
+                            Send
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   ) : (
-                    <div className="space-y-4">
-                      <div className="rounded-lg border border-white/10 bg-zinc-950/80 p-3">
-                        <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-zinc-500">Active Thread</div>
-                        <div className="break-all font-mono text-sm text-zinc-100">{thread.id}</div>
-                        <div className="mt-3 flex items-center gap-2 text-sm">
-                          <span className="text-zinc-500">Voice:</span>
-                          <span className={voiceStatusColor(voiceStatus)}>{voiceStatus}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        {voiceStatus === "idle" || voiceStatus === "error" ? (
-                          <Button className="bg-white text-black hover:bg-zinc-200" onClick={startVoice}>
-                            <Mic className="size-4" />
-                            Start Codex Voice
-                          </Button>
-                        ) : (
-                          <Button variant="destructive" onClick={stopVoice}>
-                            <Square className="size-4" />
-                            Stop Codex Voice
-                          </Button>
-                        )}
-                      </div>
+                    <div className="rounded-xl border border-white/8 bg-[#171d1b] p-4 text-sm text-zinc-400">
+                      Preparing Codex connection, logging in with the server API key, and starting the project thread.
                     </div>
                   )}
                 </>
@@ -741,19 +942,13 @@ export default function App() {
                   {threadError}
                 </div>
               ) : null}
-
-              {voiceError ? (
-                <div className="rounded-2xl border border-red-500/20 bg-red-950/30 px-4 py-3 text-sm text-red-200">
-                  {voiceError}
-                </div>
-              ) : null}
             </PanelShell>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-            <ConversationPanel messages={realtimeMessages} />
-            <RealtimeLogPanel entries={realtimeLogs} />
+            <CodexConversationPanel messages={codexMessages} turnStatus={activeTurnStatus} />
             <EventPanel events={agentEvents} />
+            <RealtimeLogPanel entries={realtimeLogs} />
             <JsonRpcLogPanel entries={log} />
           </div>
         </div>

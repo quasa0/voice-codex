@@ -14,7 +14,7 @@ export interface OpenAIRealtimeMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
-  status: "streaming" | "complete";
+  status: "capturing" | "partial" | "streaming" | "final";
   source: "voice" | "text" | "voice-pending";
   timestamp: string;
 }
@@ -23,6 +23,11 @@ interface ConnectOptions {
   model: string;
   voice: string;
   instructions?: string;
+}
+
+interface SendTextOptions {
+  requestResponse?: boolean;
+  visible?: boolean;
 }
 
 let nextRealtimeLogId = 1;
@@ -39,18 +44,21 @@ function summarizeEvent(event: unknown) {
 export function useOpenAIRealtime() {
   const [status, setStatus] = useState<OpenAIRealtimeStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
   const [logs, setLogs] = useState<OpenAIRealtimeLogEntry[]>([]);
   const [messages, setMessages] = useState<OpenAIRealtimeMessage[]>([]);
   const [isMicMuted, setIsMicMuted] = useState(true);
+  const [connectedAt, setConnectedAt] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const pendingTextResponseRef = useRef<string | null>(null);
-  const respondedVoiceItemIdsRef = useRef<Set<string>>(new Set());
+  const isMicMutedRef = useRef(true);
 
-  const upsertUserVoiceMessage = useCallback((id: string, text: string, status: "streaming" | "complete", source: "voice" | "voice-pending") => {
+  const upsertUserVoiceMessage = useCallback((id: string, text: string, status: "capturing" | "partial" | "final", source: "voice" | "voice-pending") => {
     setMessages((prev) => {
       const existing = prev.find((message) => message.id === id);
       if (existing) {
@@ -111,16 +119,30 @@ export function useOpenAIRealtime() {
       audioRef.current.srcObject = null;
     }
 
-    respondedVoiceItemIdsRef.current.clear();
     setIsMicMuted(true);
+    isMicMutedRef.current = true;
+    setConnectedAt(null);
+    setElapsedSeconds(0);
 
     setStatus(nextStatus);
   }, []);
+
+  const requestResponse = useCallback(() => {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== "open") {
+      throw new Error("OpenAI Realtime data channel is not open");
+    }
+
+    const responseEvent = { type: "response.create" };
+    dc.send(JSON.stringify(responseEvent));
+    addLog("client", "response.create", JSON.stringify(responseEvent, null, 2));
+  }, [addLog]);
 
   const connect = useCallback(
     async ({ model, voice, instructions }: ConnectOptions) => {
       disconnect();
       setError(null);
+      setLastError(null);
       setLogs([]);
       setMessages([]);
       setStatus("requesting-mic");
@@ -139,6 +161,7 @@ export function useOpenAIRealtime() {
       });
       localStreamRef.current = stream;
       setIsMicMuted(true);
+      isMicMutedRef.current = true;
       addLog("meta", "mic-muted", "Local microphone track disabled by default");
       setStatus("connecting");
 
@@ -161,6 +184,8 @@ export function useOpenAIRealtime() {
 
       dc.addEventListener("open", () => {
         addLog("meta", "data-channel", "OpenAI Realtime data channel opened");
+        setConnectedAt(Date.now());
+        setElapsedSeconds(0);
         setStatus("active");
       });
 
@@ -180,22 +205,22 @@ export function useOpenAIRealtime() {
 
           if (type === "input_audio_buffer.committed") {
             const itemId = String(parsed.item_id ?? "");
-            if (itemId) {
-              upsertUserVoiceMessage(itemId, "Listening...", "streaming", "voice-pending");
+            if (itemId && !isMicMutedRef.current) {
+              upsertUserVoiceMessage(itemId, "Listening...", "capturing", "voice-pending");
             }
           }
 
           if (type === "conversation.item.input_audio_transcription.delta") {
             const itemId = String(parsed.item_id ?? "");
             const delta = String(parsed.delta ?? "");
-            if (itemId && delta) {
+            if (itemId && delta && !isMicMutedRef.current) {
               setMessages((prev) => {
                 const existing = prev.find((message) => message.id === itemId);
                 if (existing) {
                   const baseText = existing.text === "Listening..." || existing.text === "(voice captured)" ? "" : existing.text;
                   return prev.map((message) =>
                     message.id === itemId
-                      ? { ...message, text: `${baseText}${delta}`, status: "streaming", source: "voice" }
+                      ? { ...message, text: `${baseText}${delta}`, status: "partial", source: "voice" }
                       : message,
                   );
                 }
@@ -205,7 +230,7 @@ export function useOpenAIRealtime() {
                     id: itemId,
                     role: "user",
                     text: delta,
-                    status: "streaming",
+                    status: "partial",
                     source: "voice",
                     timestamp: now(),
                   },
@@ -217,14 +242,8 @@ export function useOpenAIRealtime() {
           if (type === "conversation.item.input_audio_transcription.completed") {
             const itemId = String(parsed.item_id ?? "");
             const transcript = String(parsed.transcript ?? "").trim();
-            if (itemId && transcript) {
-              upsertUserVoiceMessage(itemId, transcript, "complete", "voice");
-              if (!respondedVoiceItemIdsRef.current.has(itemId) && dc.readyState === "open") {
-                const responseEvent = { type: "response.create" };
-                dc.send(JSON.stringify(responseEvent));
-                addLog("client", "response.create", JSON.stringify(responseEvent, null, 2));
-                respondedVoiceItemIdsRef.current.add(itemId);
-              }
+            if (itemId && transcript && !isMicMutedRef.current) {
+              upsertUserVoiceMessage(itemId, transcript, "final", "voice");
             }
           }
 
@@ -238,14 +257,8 @@ export function useOpenAIRealtime() {
                 .map((part) => part.transcript)
                 .find((value) => typeof value === "string" && value.trim().length > 0);
 
-              if (typeof transcript === "string" && transcript.trim()) {
-                upsertUserVoiceMessage(itemId, transcript.trim(), "complete", "voice");
-                if (!respondedVoiceItemIdsRef.current.has(itemId) && dc.readyState === "open") {
-                  const responseEvent = { type: "response.create" };
-                  dc.send(JSON.stringify(responseEvent));
-                  addLog("client", "response.create", JSON.stringify(responseEvent, null, 2));
-                  respondedVoiceItemIdsRef.current.add(itemId);
-                }
+              if (!isMicMutedRef.current && typeof transcript === "string" && transcript.trim()) {
+                upsertUserVoiceMessage(itemId, transcript.trim(), "final", "voice");
               } else {
                 removePendingVoiceMessage(itemId);
               }
@@ -285,7 +298,7 @@ export function useOpenAIRealtime() {
               setMessages((prev) =>
                 prev.map((message) =>
                   message.id === itemId
-                    ? { ...message, text: transcript || message.text, status: "complete" }
+                    ? { ...message, text: transcript || message.text, status: "final" }
                     : message,
                 ),
               );
@@ -323,7 +336,9 @@ export function useOpenAIRealtime() {
           throw new Error(answerSdp || `Realtime session request failed with ${response.status}`);
         }
       } catch (e) {
-        setError(`Failed to start OpenAI Realtime session: ${(e as Error).message}`);
+        const message = `Failed to start OpenAI Realtime session: ${(e as Error).message}`;
+        setError(message);
+        setLastError(message);
         disconnect("error");
         return;
       }
@@ -335,12 +350,13 @@ export function useOpenAIRealtime() {
   );
 
   const sendText = useCallback(
-    (text: string) => {
+    (text: string, options: SendTextOptions = {}) => {
       const dc = dcRef.current;
       if (!dc || dc.readyState !== "open") {
         throw new Error("OpenAI Realtime data channel is not open");
       }
 
+      const { requestResponse: shouldRequestResponse = true, visible = true } = options;
       const userEvent = {
         type: "conversation.item.create",
         item: {
@@ -349,24 +365,28 @@ export function useOpenAIRealtime() {
           content: [{ type: "input_text", text }],
         },
       };
-      const responseEvent = { type: "response.create" };
 
       dc.send(JSON.stringify(userEvent));
-      dc.send(JSON.stringify(responseEvent));
       addLog("client", "conversation.item.create", JSON.stringify(userEvent, null, 2));
-      addLog("client", "response.create", JSON.stringify(responseEvent, null, 2));
+      if (shouldRequestResponse) {
+        const responseEvent = { type: "response.create" };
+        dc.send(JSON.stringify(responseEvent));
+        addLog("client", "response.create", JSON.stringify(responseEvent, null, 2));
+      }
       pendingTextResponseRef.current = text;
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `text-${crypto.randomUUID()}`,
-          role: "user",
-          text,
-          status: "complete",
-          source: "text",
-          timestamp: now(),
-        },
-      ]);
+      if (visible) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `text-${crypto.randomUUID()}`,
+            role: "user",
+            text,
+            status: "final",
+            source: "text",
+            timestamp: now(),
+          },
+        ]);
+      }
     },
     [addLog],
   );
@@ -379,6 +399,7 @@ export function useOpenAIRealtime() {
       track.enabled = !muted;
     });
     setIsMicMuted(muted);
+    isMicMutedRef.current = muted;
     addLog("meta", muted ? "mic-muted" : "mic-unmuted", muted ? "Local microphone track disabled" : "Local microphone track enabled");
   }, [addLog]);
 
@@ -386,7 +407,30 @@ export function useOpenAIRealtime() {
     setMicMuted(!isMicMuted);
   }, [isMicMuted, setMicMuted]);
 
+  useEffect(() => {
+    if (!connectedAt) return;
+    const interval = window.setInterval(() => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - connectedAt) / 1000)));
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [connectedAt]);
+
   useEffect(() => () => disconnect(), [disconnect]);
 
-  return { status, error, logs, messages, isMicMuted, connect, disconnect, sendText, setMicMuted, toggleMicMuted };
+  return {
+    status,
+    error,
+    lastError,
+    logs,
+    messages,
+    isMicMuted,
+    connectedAt,
+    elapsedSeconds,
+    connect,
+    disconnect,
+    requestResponse,
+    sendText,
+    setMicMuted,
+    toggleMicMuted,
+  };
 }

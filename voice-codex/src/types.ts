@@ -56,3 +56,11 @@ export interface AgentEvent {
 }
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
+
+export interface CodexMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  status: "streaming" | "final";
+  timestamp: string;
+}
