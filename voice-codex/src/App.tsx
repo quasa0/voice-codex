@@ -772,6 +772,12 @@ export default function App() {
               title="OpenAI Realtime"
               description="Direct voice lane over the OpenAI Realtime API."
               icon={<WandSparkles className="size-4" />}
+              headerRight={
+                <Badge className={`gap-2 ${turnBadgeClass(isMicMuted ? "idle" : "running")}`}>
+                  <span className={`size-2 rounded-full ${statusDotClass(isMicMuted ? "idle" : "active")}`} />
+                  {isMicMuted ? "muted" : "live"}
+                </Badge>
+              }
               contentClassName="flex min-h-[36rem] flex-col space-y-4"
             >
               {realtimeStatus === "idle" || realtimeStatus === "error" ? (
@@ -791,9 +797,6 @@ export default function App() {
                     <Badge className={`gap-2 ${panelBadgeClass()}`}>
                       <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
                       {realtimeStatus}
-                    </Badge>
-                    <Badge variant="outline" className={panelBadgeClass()}>
-                      {isMicMuted ? "muted" : "live"}
                     </Badge>
                     <Badge variant="outline" className={panelBadgeClass()}>
                       {realtimeConnectedAt ? formatDuration(realtimeElapsedSeconds) : "--:--"}
