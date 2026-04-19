@@ -282,22 +282,6 @@ function panelBadgeClass() {
   return "h-8 rounded-full border-[#b9f075]/20 bg-[#b9f075]/10 px-3 text-[13px] font-medium text-[#d8f5ab]";
 }
 
-function turnBadgeClass(status: CodexSegmentState) {
-  if (status === "running") {
-    return "h-10 rounded-full border-[#b9f075]/25 bg-[#b9f075]/14 px-4 text-[14px] font-semibold text-[#ecffd0]";
-  }
-  if (status === "waiting_for_user") {
-    return "h-10 rounded-full border-orange-400/25 bg-orange-400/14 px-4 text-[14px] font-semibold text-orange-100";
-  }
-  if (status === "failed") {
-    return "h-10 rounded-full border-red-500/30 bg-red-500/14 px-4 text-[14px] font-semibold text-red-100";
-  }
-  if (status === "completed") {
-    return "h-10 rounded-full border-white/14 bg-white/[0.07] px-4 text-[14px] font-semibold text-zinc-100";
-  }
-  return "h-10 rounded-full border-white/12 bg-white/[0.05] px-4 text-[14px] font-semibold text-zinc-100";
-}
-
 function eventToneClass(method?: string) {
   if (!method) return "text-zinc-400";
   if (method.startsWith("turn/")) return "text-white";
@@ -381,6 +365,68 @@ function RealtimeStatusBadge({
       <div className="space-y-0.5">
         <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">voice</div>
         <div className="text-[14px] font-semibold leading-none text-zinc-100">{isMuted ? "muted" : "live"}</div>
+      </div>
+    </div>
+  );
+}
+
+function CodexStatusGlyph({ codexState }: { codexState: CodexSegmentState }) {
+  const active = codexState === "running";
+  const waiting = codexState === "waiting_for_user";
+  const failed = codexState === "failed";
+  const bars = [0.34, 0.7, 1, 0.76, 0.42];
+
+  return (
+    <div className="flex w-[52px] items-center justify-center gap-[3px]">
+      {bars.map((height, index) => {
+        const barClass = failed
+          ? "bg-red-300/85"
+          : waiting
+            ? "bg-orange-300/85"
+            : active
+              ? "bg-[#b9f075]"
+              : "bg-zinc-500/65";
+
+        const renderedHeight = active ? Math.max(8, Math.round(18 * height)) : waiting ? Math.max(8, Math.round(14 * height)) : 8;
+        return (
+          <span
+            key={`${index}-${height}`}
+            className={`rounded-full ${barClass}`}
+            style={{
+              width: "3px",
+              height: `${renderedHeight}px`,
+              animation:
+                active
+                  ? `codex-status-wave 0.95s ease-in-out ${index * 0.07}s infinite`
+                  : waiting
+                    ? `codex-status-breathe 1.6s ease-in-out ${index * 0.1}s infinite`
+                    : "none",
+              boxShadow: active ? "0 0 10px rgba(185,240,117,0.22)" : waiting ? "0 0 10px rgba(253,186,116,0.18)" : "none",
+              transformOrigin: "center",
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function CodexStatusBadge({ codexState }: { codexState: CodexSegmentState }) {
+  const label =
+    codexState === "waiting_for_user"
+      ? "waiting"
+      : codexState === "completed"
+        ? "complete"
+        : codexState === "failed"
+          ? "failed"
+          : codexState;
+
+  return (
+    <div className="flex items-center gap-3 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+      <CodexStatusGlyph codexState={codexState} />
+      <div className="space-y-0.5">
+        <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">codex</div>
+        <div className="text-[14px] font-semibold leading-none text-zinc-100">{label}</div>
       </div>
     </div>
   );
@@ -1123,6 +1169,14 @@ export default function App() {
           0%, 100% { transform: scaleY(0.48); opacity: 0.86; }
           50% { transform: scaleY(1.02); opacity: 1; }
         }
+        @keyframes codex-status-wave {
+          0%, 100% { transform: scaleY(0.52); opacity: 0.82; }
+          50% { transform: scaleY(1.08); opacity: 1; }
+        }
+        @keyframes codex-status-breathe {
+          0%, 100% { transform: scaleY(0.82); opacity: 0.72; }
+          50% { transform: scaleY(1); opacity: 1; }
+        }
         @keyframes codex-working-dot {
           0%, 100% { transform: scale(0.92); opacity: 0.68; box-shadow: 0 0 0 rgba(185,240,117,0); }
           50% { transform: scale(1.18); opacity: 1; box-shadow: 0 0 14px rgba(185,240,117,0.45); }
@@ -1289,24 +1343,7 @@ export default function App() {
               title="Codex App Server"
               description="Local Codex agent."
               icon={<Cable className="size-4" />}
-              headerRight={
-                <Badge className={`gap-2 ${turnBadgeClass(currentCodexState)}`}>
-                  <span
-                    className={`size-2 rounded-full ${
-                      statusDotClass(
-                        currentCodexState === "running"
-                          ? "active"
-                          : currentCodexState === "failed"
-                            ? "error"
-                            : currentCodexState === "waiting_for_user"
-                              ? "connecting"
-                              : "idle",
-                      )
-                    }`}
-                  />
-                  Codex {currentCodexState.replaceAll("_", " ")}
-                </Badge>
-              }
+              headerRight={<CodexStatusBadge codexState={currentCodexState} />}
               contentClassName="flex min-h-[36rem] flex-col space-y-4"
             >
               <div className="flex min-h-10 flex-wrap items-center justify-between gap-3">
