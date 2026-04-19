@@ -370,6 +370,13 @@ function formatLocalTime(timestamp: string) {
   }).format(date);
 }
 
+function formatStatusLabel(value: string) {
+  return value
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("-");
+}
+
 function TimestampLabel({ timestamp, className = "" }: { timestamp: string; className?: string }) {
   return (
     <span
@@ -1399,7 +1406,7 @@ export default function App() {
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge className={`gap-2 ${panelBadgeClass()}`}>
                         <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
-                        {realtimeStatus.charAt(0).toUpperCase() + realtimeStatus.slice(1)}
+                        {formatStatusLabel(realtimeStatus)}
                       </Badge>
                       {realtimeLastError ? (
                         <Badge variant="outline" className="max-w-full border-red-500/20 bg-red-950/20 text-red-200">
@@ -1492,7 +1499,7 @@ export default function App() {
             </PanelShell>
 
             <PanelShell
-              title="Codex App Server"
+              title="Codex app-server"
               description="Local Codex agent."
               icon={<Cable className="size-4" />}
               headerRight={<CodexStatusBadge codexState={currentCodexState} />}
