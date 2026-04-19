@@ -88,3 +88,11 @@ export interface CodexSegment {
   filesEdited: string[];
   commandsRun: string[];
 }
+
+declare global {
+  interface Window {
+    IDEBridge?: {
+      openFile: (path: string) => void;
+    };
+  }
+}

@@ -29,6 +29,16 @@ function truncateLine(text: string, maxLength = 220) {
   return singleLine.slice(0, maxLength) || null;
 }
 
+function trimWrappedQuotes(value: string) {
+  return value.replace(/^['"]|['"]$/g, "");
+}
+
+function joinProjectPath(basePath: string, candidate: string) {
+  if (!candidate) return null;
+  if (candidate.startsWith("/")) return candidate;
+  return `${basePath.replace(/\/$/, "")}/${candidate.replace(/^\.\//, "")}`;
+}
+
 function isCodexProgressMessage(text: string) {
   const trimmed = text.trim();
   if (!trimmed) return true;
@@ -63,14 +73,44 @@ function messageRequestsUserInput(text: string) {
   ].some((phrase) => lowered.includes(phrase));
 }
 
+function parseCommandContext(command: string) {
+  const trimmed = command.trim();
+  const cdPrefix = trimmed.match(/^cd\s+(['"]?)([^'"]+)\1\s*&&\s*(.+)$/);
+  if (!cdPrefix) {
+    return { workingDirectory: "", innerCommand: trimmed };
+  }
+
+  return {
+    workingDirectory: trimWrappedQuotes(cdPrefix[2]?.trim() ?? ""),
+    innerCommand: cdPrefix[3]?.trim() ?? "",
+  };
+}
+
 function extractTouchedPath(command: string) {
-  const match = command.match(/(?:cat|ls|nl -ba|sed -n '[^']+'|rg --files)\s+(['"]?)([^'"\n]+)\1/);
+  const { workingDirectory, innerCommand } = parseCommandContext(command);
+  const match = innerCommand.match(/(?:cat|nl -ba|sed -n '[^']+')\s+(['"]?)([^'"\n]+)\1/);
   if (!match) return null;
-  const rawPath = match[2]?.trim();
+  const rawPath = trimWrappedQuotes(match[2]?.trim() ?? "");
   if (!rawPath) return null;
-  const normalized = rawPath.replace(/^cd\s+[^&]+&&\s*/, "").trim();
+  const normalized = workingDirectory && !rawPath.startsWith("/")
+    ? `${workingDirectory.replace(/\/$/, "")}/${rawPath.replace(/^\.\//, "")}`
+    : rawPath;
   const segments = normalized.split("/").filter(Boolean);
   return segments.slice(-2).join("/") || normalized;
+}
+
+function extractCommandFilePath(command: string) {
+  const { workingDirectory, innerCommand } = parseCommandContext(command);
+  const match = innerCommand.match(/(?:cat|nl -ba|sed -n '[^']+')\s+(['"]?)([^'"\n]+)\1/);
+  if (!match) return null;
+  const rawPath = trimWrappedQuotes(match[2]?.trim() ?? "");
+  if (!rawPath) return null;
+  return joinProjectPath(
+    CODEX_PROJECT_CWD,
+    workingDirectory && !rawPath.startsWith("/")
+      ? `${workingDirectory.replace(/\/$/, "")}/${rawPath.replace(/^\.\//, "")}`
+      : rawPath,
+  );
 }
 
 function extractEditedPath(item: Record<string, unknown>) {
@@ -85,6 +125,19 @@ function extractEditedPath(item: Record<string, unknown>) {
   const normalized = pathCandidate.trim();
   const segments = normalized.split("/").filter(Boolean);
   return segments.slice(-2).join("/") || normalized;
+}
+
+function extractEditedAbsolutePath(item: Record<string, unknown>) {
+  const pathCandidate = [
+    item.path,
+    item.filePath,
+    item.targetPath,
+    item.relativePath,
+    item.uri,
+  ].find((value) => typeof value === "string" && value.trim());
+  if (typeof pathCandidate !== "string") return null;
+  const normalized = trimWrappedQuotes(pathCandidate.trim());
+  return joinProjectPath(CODEX_PROJECT_CWD, normalized);
 }
 
 function summarizeCommandLabel(item: Record<string, unknown>) {
@@ -177,10 +230,19 @@ export function useCodexWebSocket() {
   const pendingNextTurnSegmentIdRef = useRef<string | null>(null);
   const activeSegmentIdRef = useRef<string | null>(null);
   const codexMessagesRef = useRef<CodexMessage[]>([]);
+  const lastIdeOpenedPathRef = useRef<string | null>(null);
 
   useEffect(() => {
     codexMessagesRef.current = codexMessages;
   }, [codexMessages]);
+
+  const openFileInIde = useCallback((path: string | null | undefined) => {
+    const normalizedPath = path?.trim();
+    if (!normalizedPath || typeof window === "undefined" || !window.IDEBridge?.openFile) return;
+    if (lastIdeOpenedPathRef.current === normalizedPath) return;
+    lastIdeOpenedPathRef.current = normalizedPath;
+    window.IDEBridge.openFile(normalizedPath);
+  }, []);
 
   const updateSegment = useCallback((segmentId: string | null | undefined, updater: (segment: CodexSegment) => CodexSegment) => {
     if (!segmentId) return;
@@ -264,6 +326,8 @@ export function useCodexWebSocket() {
     if (!segmentId) return;
     const command = String(item.command ?? "").trim();
     const touchedPath = extractTouchedPath(command);
+    const idePath = extractCommandFilePath(command);
+    openFileInIde(idePath);
     updateSegment(segmentId, (segment) => ({
       ...segment,
       codexState: "running",
@@ -275,7 +339,7 @@ export function useCodexWebSocket() {
         ? [...segment.filesRead, touchedPath].slice(-8)
         : segment.filesRead,
     }));
-  }, [updateSegment]);
+  }, [openFileInIde, updateSegment]);
 
   const noteSegmentMessage = useCallback((segmentId: string | null | undefined, text: string, status: "streaming" | "final") => {
     if (!segmentId) return;
@@ -314,6 +378,8 @@ export function useCodexWebSocket() {
   const noteSegmentFileChange = useCallback((segmentId: string | null | undefined, item: Record<string, unknown>) => {
     if (!segmentId) return;
     const editedPath = extractEditedPath(item);
+    const absoluteEditedPath = extractEditedAbsolutePath(item);
+    openFileInIde(absoluteEditedPath);
     const milestone = truncateLine(String(item.summary ?? item.description ?? "Updated files"));
     updateSegment(segmentId, (segment) => ({
       ...segment,
@@ -323,7 +389,7 @@ export function useCodexWebSocket() {
         ? [...segment.filesEdited, editedPath].slice(-8)
         : segment.filesEdited,
     }));
-  }, [updateSegment]);
+  }, [openFileInIde, updateSegment]);
 
   const setSegmentRelayState = useCallback((segmentId: string, relayState: CodexRelayState) => {
     updateSegment(segmentId, (segment) => ({ ...segment, relayState }));
