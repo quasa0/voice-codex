@@ -242,6 +242,21 @@ function buildManagedCodexRequest(originalText: string, normalizedText: string) 
   ].join("\n");
 }
 
+function getRealtimeInputPlaceholder(
+  realtimeStatus: OpenAIRealtimeStatus,
+  isMicMuted: boolean,
+) {
+  if (realtimeStatus !== "active") {
+    return "Start a call to use realtime voice";
+  }
+
+  if (isMicMuted) {
+    return "Unmute to speak, or type to chat";
+  }
+
+  return "Speak or type to chat";
+}
+
 function segmentHasMeaningfulSummary(segment: CodexSegment | null) {
   if (!segment) return false;
   return Boolean(
@@ -2437,7 +2452,7 @@ export default function App() {
                               ? "border-[#d3d7dc] bg-white text-[#1f2328] focus:border-[#2fa860] focus:ring-2 focus:ring-[#2fa860]/20"
                               : "border-[#d3d7dc] bg-[#f7f8fa] text-[#9aa1ab]"
                           }`}
-                          placeholder="Type to the realtime session"
+                          placeholder={getRealtimeInputPlaceholder(realtimeStatus, isMicMuted)}
                           disabled={!realtimeCanType}
                           onKeyDown={(event) => {
                             if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
