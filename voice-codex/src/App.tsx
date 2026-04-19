@@ -306,11 +306,11 @@ function EventPanel({ events }: { events: AgentEvent[] }) {
 
 function CodexConversationPanel({ messages }: { messages: CodexMessage[] }) {
   return (
-    <div className="rounded-xl border border-white/8 bg-[#171d1b] p-3">
-      <ScrollArea className="h-[24rem] pr-3">
-        <div className="flex flex-col-reverse gap-1.5">
+    <div className="flex h-full min-h-0 flex-col rounded-xl border border-white/8 bg-[#171d1b] p-3">
+      <ScrollArea className="min-h-0 flex-1 pr-3">
+        <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-1.5"}>
           {messages.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-white/8 bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
+            <div className="flex w-full max-w-md items-center justify-center rounded-2xl border border-dashed border-white/8 bg-white/[0.02] px-6 py-8 text-center text-sm text-zinc-500">
               No Codex messages yet.
             </div>
           ) : (
@@ -343,11 +343,11 @@ function CodexConversationPanel({ messages }: { messages: CodexMessage[] }) {
 
 function ConversationPanel({ messages }: { messages: RealtimeMessage[] }) {
   return (
-    <div className="rounded-xl border border-white/8 bg-[#171d1b] p-3">
-      <ScrollArea className="h-[24rem] pr-3">
-        <div className="flex flex-col-reverse gap-1.5">
+    <div className="flex h-full min-h-0 flex-col rounded-xl border border-white/8 bg-[#171d1b] p-3">
+      <ScrollArea className="min-h-0 flex-1 pr-3">
+        <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-1.5"}>
           {messages.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-white/8 bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
+            <div className="flex w-full max-w-md items-center justify-center rounded-2xl border border-dashed border-white/8 bg-white/[0.02] px-6 py-8 text-center text-sm text-zinc-500">
               No conversation messages yet.
             </div>
           ) : (
