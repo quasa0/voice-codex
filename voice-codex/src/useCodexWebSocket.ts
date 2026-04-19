@@ -289,9 +289,9 @@ export function useCodexWebSocket() {
             : isFinalSubstantiveAnswer
               ? "completed"
               : segment.codexState === "waiting_for_user" && status === "streaming"
-              ? "running"
-              : segment.codexState,
-        latestMilestone: firstLine ?? segment.latestMilestone,
+                ? "running"
+                : segment.codexState,
+        latestMilestone: status === "final" ? firstLine ?? segment.latestMilestone : segment.latestMilestone,
         blockingQuestion,
         finalOutcome,
       };
@@ -710,19 +710,21 @@ export function useCodexWebSocket() {
         if (item?.type === "agentMessage") {
           const itemId = String(item.id ?? "");
           const targetId = assistantMessageIdByItemRef.current.get(itemId) ?? itemId;
-          const text = Array.isArray(item.content)
+          const textFromContent = Array.isArray(item.content)
             ? (item.content as Array<Record<string, unknown>>)
                 .map((part) => String(part.text ?? ""))
                 .join("")
             : "";
-          noteSegmentMessage(segmentId, text, "final");
+          const existingMessage = codexMessages.find((message) => message.id === targetId);
+          const resolvedText = textFromContent || existingMessage?.text || "";
+          noteSegmentMessage(segmentId, resolvedText, "final");
           if (targetId) {
             setCodexMessages((prev) =>
               prev.map((message) =>
                 message.id === targetId
                   ? {
                       ...message,
-                      text: text || message.text,
+                      text: resolvedText || message.text,
                       status: "final",
                       turnId: message.turnId ?? turnId,
                       segmentId: message.segmentId ?? segmentId ?? null,
