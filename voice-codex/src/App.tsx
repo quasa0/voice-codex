@@ -123,6 +123,16 @@ function panelBadgeClass() {
   return "h-8 rounded-full border-[#b9f075]/20 bg-[#b9f075]/10 px-3 text-[13px] font-medium text-[#d8f5ab]";
 }
 
+function turnBadgeClass(status: "idle" | "running" | "error") {
+  if (status === "running") {
+    return "h-10 rounded-full border-[#b9f075]/25 bg-[#b9f075]/14 px-4 text-[14px] font-semibold text-[#ecffd0]";
+  }
+  if (status === "error") {
+    return "h-10 rounded-full border-red-500/30 bg-red-500/14 px-4 text-[14px] font-semibold text-red-100";
+  }
+  return "h-10 rounded-full border-white/12 bg-white/[0.05] px-4 text-[14px] font-semibold text-zinc-100";
+}
+
 function eventToneClass(method?: string) {
   if (!method) return "text-zinc-400";
   if (method.startsWith("turn/")) return "text-white";
@@ -137,30 +147,39 @@ function PanelShell({
   title,
   description,
   icon,
+  headerRight,
   children,
   contentClassName,
 }: {
   title: string;
   description?: string;
   icon?: React.ReactNode;
+  headerRight?: React.ReactNode;
   children: React.ReactNode;
   contentClassName?: string;
 }) {
   return (
     <Card className="h-full border-white/8 bg-[#1d2421]/92 shadow-2xl shadow-black/20 backdrop-blur-sm">
       <CardHeader className="space-y-1 pb-3">
-        <div className="flex items-center gap-3">
-          {icon ? (
-            <div className="flex size-7 items-center justify-center rounded-xl border border-white/8 bg-white/[0.03] text-zinc-100">
-              {icon}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            {icon ? (
+              <div className="flex size-7 items-center justify-center rounded-xl border border-white/8 bg-white/[0.03] text-zinc-100">
+                {icon}
+              </div>
+            ) : null}
+            <div>
+              <CardTitle className="text-[1.05rem] font-semibold tracking-tight text-zinc-50">{title}</CardTitle>
+              {description ? (
+                <CardDescription className="text-sm leading-5 text-zinc-400/90">{description}</CardDescription>
+              ) : null}
+            </div>
+          </div>
+          {headerRight ? (
+            <div className="shrink-0">
+              {headerRight}
             </div>
           ) : null}
-          <div>
-            <CardTitle className="text-[1.05rem] font-semibold tracking-tight text-zinc-50">{title}</CardTitle>
-            {description ? (
-              <CardDescription className="text-sm leading-5 text-zinc-400/90">{description}</CardDescription>
-            ) : null}
-          </div>
         </div>
       </CardHeader>
       <CardContent className={contentClassName}>{children}</CardContent>
@@ -846,8 +865,14 @@ export default function App() {
 
             <PanelShell
               title="Codex App Server"
-              description="Preserved local Codex control path for threads, auth, and later voice-to-code orchestration."
+              description="Codex agent control path for local threads and voice handoff."
               icon={<Cable className="size-4" />}
+              headerRight={
+                <Badge className={`gap-2 ${turnBadgeClass(activeTurnStatus)}`}>
+                  <span className={`size-2 rounded-full ${statusDotClass(activeTurnStatus === "running" ? "active" : activeTurnStatus)}`} />
+                  Turn {activeTurnStatus}
+                </Badge>
+              }
               contentClassName="flex min-h-[36rem] flex-col space-y-4"
             >
               <div className="flex flex-wrap items-center gap-2">
@@ -874,9 +899,6 @@ export default function App() {
                     Voice bridge active
                   </Badge>
                 ) : null}
-                <Badge variant="outline" className={panelBadgeClass()}>
-                  Turn {activeTurnStatus}
-                </Badge>
               </div>
 
               {status === "connected" ? (
