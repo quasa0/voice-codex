@@ -1381,7 +1381,7 @@ export default function App() {
         <div className="space-y-4">
           <div className="grid items-stretch gap-4 md:grid-cols-2">
             <PanelShell
-              title="OpenAI Realtime"
+              title="Realtime Agent"
               description="Direct voice chat."
               icon={<WandSparkles className="size-4" />}
               headerRight={
