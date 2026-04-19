@@ -745,13 +745,13 @@ function CodexConversationPanel({
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
-    element.scrollTop = element.scrollHeight;
+    element.scrollTop = 0;
   }, [messages, activeSegment?.id, activeSegment?.updatedAt]);
 
   return (
     <div className="flex h-full min-h-0 flex-col rounded-[1.55rem] border border-white/8 bg-[#171d1b] px-4 py-4">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
-        <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col gap-4"}>
+        <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-4"}>
           {messages.length === 0 ? (
             <div className="flex min-h-full items-center justify-center text-center">
               <div className="max-w-md space-y-2 px-6">
@@ -841,13 +841,13 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
-    element.scrollTop = element.scrollHeight;
+    element.scrollTop = 0;
   }, [messages]);
 
   return (
     <div className="flex h-full min-h-0 flex-col rounded-[1.55rem] border border-white/8 bg-[#171d1b] px-4 py-4">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
-        <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col gap-4"}>
+        <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-4"}>
           {messages.length === 0 ? (
             <div className="flex min-h-full items-center justify-center text-center">
               <div className="max-w-md space-y-2 px-6">
