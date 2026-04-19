@@ -89,6 +89,18 @@ export function useCodexWebSocket() {
     setCodexMessages((prev) => [...prev, message]);
   }, []);
 
+  const addSystemMessage = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    appendCodexMessage({
+      id: `system-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      role: "system",
+      text: trimmed,
+      status: "final",
+      timestamp: nowTime(),
+    });
+  }, [appendCodexMessage]);
+
   const upsertCodexMessage = useCallback((message: CodexMessage) => {
     setCodexMessages((prev) => {
       const existingIndex = prev.findIndex((entry) => entry.id === message.id);
@@ -490,6 +502,7 @@ export function useCodexWebSocket() {
     startTurn,
     steerTurn,
     interruptTurn,
+    addSystemMessage,
     wsRef,
   };
 }

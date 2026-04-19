@@ -59,7 +59,7 @@ export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "er
 
 export interface CodexMessage {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   text: string;
   status: "streaming" | "final";
   timestamp: string;

@@ -138,6 +138,7 @@ function messagePhaseLabel(message: RealtimeMessage) {
 }
 
 function codexMessagePhaseLabel(message: CodexMessage) {
+  if (message.role === "system") return "event";
   return message.status === "streaming" ? "streaming" : "final";
 }
 
@@ -346,18 +347,43 @@ function CodexConversationPanel({ messages }: { messages: CodexMessage[] }) {
             messages.map((message) => (
               <div
                 key={message.id}
-                className={`border-b border-white/6 py-2 ${message.role === "assistant" ? "text-left" : "text-right"}`}
+                className={`border-b border-white/6 py-2 ${
+                  message.role === "assistant"
+                    ? "text-left"
+                    : message.role === "system"
+                      ? "text-left"
+                      : "text-right"
+                }`}
               >
-                <div className={`space-y-1 ${message.role === "assistant" ? "mr-12" : "ml-12"}`}>
+                <div
+                  className={`space-y-1 ${
+                    message.role === "assistant"
+                      ? "mr-12"
+                      : message.role === "system"
+                        ? "mr-6"
+                        : "ml-12"
+                  }`}
+                >
                   <div
-                    className={`flex flex-wrap gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] text-zinc-500 ${
-                      message.role === "assistant" ? "justify-start" : "justify-end"
+                    className={`flex flex-wrap gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] ${
+                      message.role === "system" ? "text-[#d8f5ab]/70" : "text-zinc-500"
+                    } ${
+                      message.role === "assistant"
+                        ? "justify-start"
+                        : message.role === "system"
+                          ? "justify-start"
+                          : "justify-end"
                     }`}
                   >
+                    {message.role === "system" ? <span>voice handoff</span> : null}
                     <span>{codexMessagePhaseLabel(message)}</span>
                     <span>{formatLocalTime(message.timestamp)}</span>
                   </div>
-                  <div className="whitespace-pre-wrap text-[13px] leading-5 text-zinc-100">
+                  <div
+                    className={`whitespace-pre-wrap text-[13px] leading-5 ${
+                      message.role === "system" ? "text-[#e6f8c6]" : "text-zinc-100"
+                    }`}
+                  >
                     {message.text || "..."}
                   </div>
                 </div>
@@ -437,6 +463,7 @@ export default function App() {
     startTurn,
     steerTurn,
     interruptTurn,
+    addSystemMessage,
   } = useCodexWebSocket();
 
   const {
@@ -666,18 +693,21 @@ export default function App() {
         queuedInterruptReplacementRef.current = latestFinalUserMessage.text;
         pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, turnId: activeTurnId };
         await interruptTurn(activeThread.id);
+        addSystemMessage("Voice interrupted current Codex turn. Replacement request queued.");
         return;
       }
 
       if (routed.action === "codex_steer" && activeTurnStatus === "running" && activeTurnId) {
         pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, turnId: activeTurnId };
         await steerTurn(activeThread.id, latestFinalUserMessage.text);
+        addSystemMessage("Voice steered current Codex turn.");
         return;
       }
 
       if (activeTurnStatus === "idle") {
         pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, turnId: null };
         await startTurn(activeThread.id, latestFinalUserMessage.text);
+        addSystemMessage("Voice started a new Codex turn.");
       }
     };
 
@@ -687,6 +717,7 @@ export default function App() {
   }, [
     activeTurnId,
     activeTurnStatus,
+    addSystemMessage,
     agentEvents,
     codexMessages,
     interruptTurn,
@@ -707,11 +738,12 @@ export default function App() {
     const replacement = queuedInterruptReplacementRef.current;
     queuedInterruptReplacementRef.current = null;
     pendingCodexNarrationRef.current = { request: replacement, turnId: null };
+    addSystemMessage("Voice started replacement Codex turn.");
 
     void startTurn(thread.id, replacement).catch((error) => {
       setThreadError((error as Error).message);
     });
-  }, [activeTurnStatus, startTurn, thread]);
+  }, [activeTurnStatus, addSystemMessage, startTurn, thread]);
 
   useEffect(() => {
     if (activeTurnStatus !== "idle") return;
