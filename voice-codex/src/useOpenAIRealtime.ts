@@ -12,11 +12,12 @@ export interface OpenAIRealtimeLogEntry {
 
 export interface OpenAIRealtimeMessage {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   text: string;
   status: "capturing" | "partial" | "streaming" | "final";
   source: "voice" | "text" | "voice-pending";
   timestamp: string;
+  eventKind?: "start" | "steer" | "interrupt";
 }
 
 interface ConnectOptions {
@@ -124,6 +125,23 @@ export function useOpenAIRealtime() {
         timestamp: now(),
         label,
         body,
+      },
+    ]);
+  }, []);
+
+  const addSystemMessage = useCallback((text: string, eventKind?: OpenAIRealtimeMessage["eventKind"]) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `system-${crypto.randomUUID()}`,
+        role: "system",
+        text: trimmed,
+        status: "final",
+        source: "text",
+        timestamp: now(),
+        eventKind,
       },
     ]);
   }, []);
@@ -501,5 +519,6 @@ export function useOpenAIRealtime() {
     isAssistantSpeaking,
     skipAssistant,
     cancelAssistantResponse,
+    addSystemMessage,
   };
 }

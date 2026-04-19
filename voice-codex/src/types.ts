@@ -63,4 +63,5 @@ export interface CodexMessage {
   text: string;
   status: "streaming" | "final";
   timestamp: string;
+  eventKind?: "start" | "steer" | "interrupt";
 }

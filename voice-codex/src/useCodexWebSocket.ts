@@ -89,7 +89,7 @@ export function useCodexWebSocket() {
     setCodexMessages((prev) => [...prev, message]);
   }, []);
 
-  const addSystemMessage = useCallback((text: string) => {
+  const addSystemMessage = useCallback((text: string, eventKind?: CodexMessage["eventKind"]) => {
     const trimmed = text.trim();
     if (!trimmed) return;
     appendCodexMessage({
@@ -98,6 +98,7 @@ export function useCodexWebSocket() {
       text: trimmed,
       status: "final",
       timestamp: nowTime(),
+      eventKind,
     });
   }, [appendCodexMessage]);
 

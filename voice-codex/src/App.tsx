@@ -47,11 +47,12 @@ type RealtimeLog = {
 
 type RealtimeMessage = {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   text: string;
   status: "capturing" | "partial" | "streaming" | "final";
   source: "voice" | "text" | "voice-pending";
   timestamp: string;
+  eventKind?: "start" | "steer" | "interrupt";
 };
 
 type CodexIntentAction = "chat_only" | "codex_start" | "codex_steer" | "codex_interrupt";
@@ -129,17 +130,18 @@ function formatLocalTime(timestamp: string) {
 }
 
 function messagePhaseLabel(message: RealtimeMessage) {
+  if (message.role === "system") return "event";
   if (message.role === "assistant") {
-    return message.status === "streaming" ? "streaming" : "final";
+    return message.status === "streaming" ? "streaming" : "";
   }
   if (message.status === "capturing") return "capturing";
   if (message.status === "partial") return "partial";
-  return "final";
+  return "";
 }
 
 function codexMessagePhaseLabel(message: CodexMessage) {
   if (message.role === "system") return "event";
-  return message.status === "streaming" ? "streaming" : "final";
+  return message.status === "streaming" ? "streaming" : "";
 }
 
 function statusDotClass(status: string) {
@@ -171,6 +173,25 @@ function eventToneClass(method?: string) {
   if (method.startsWith("item/agentMessage")) return "text-zinc-100";
   if (method === "thread/realtime/sdp") return "text-zinc-200";
   return "text-zinc-400";
+}
+
+function handoffEventClasses(kind?: "start" | "steer" | "interrupt") {
+  if (kind === "steer") {
+    return {
+      badge: "border-[#7fe38b]/20 bg-[#7fe38b]/10 text-[#bff6b9]",
+      text: "text-[#d8f7d0]",
+    };
+  }
+  if (kind === "interrupt") {
+    return {
+      badge: "border-orange-400/20 bg-orange-400/10 text-orange-200",
+      text: "text-orange-100",
+    };
+  }
+  return {
+    badge: "border-pink-400/20 bg-pink-400/10 text-pink-200",
+    text: "text-pink-100",
+  };
 }
 
 function PanelShell({
@@ -355,38 +376,34 @@ function CodexConversationPanel({ messages }: { messages: CodexMessage[] }) {
                       : "text-right"
                 }`}
               >
-                <div
-                  className={`space-y-1 ${
-                    message.role === "assistant"
-                      ? "mr-12"
-                      : message.role === "system"
-                        ? "mr-6"
-                        : "ml-12"
-                  }`}
-                >
-                  <div
-                    className={`flex flex-wrap gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] ${
-                      message.role === "system" ? "text-[#d8f5ab]/70" : "text-zinc-500"
-                    } ${
-                      message.role === "assistant"
-                        ? "justify-start"
-                        : message.role === "system"
-                          ? "justify-start"
-                          : "justify-end"
-                    }`}
-                  >
-                    {message.role === "system" ? <span>voice handoff</span> : null}
-                    <span>{codexMessagePhaseLabel(message)}</span>
-                    <span>{formatLocalTime(message.timestamp)}</span>
+                {message.role === "system" ? (
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] ${
+                        handoffEventClasses(message.eventKind).badge
+                      }`}
+                    >
+                      {message.text}
+                    </span>
+                    <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                      {formatLocalTime(message.timestamp)}
+                    </span>
                   </div>
-                  <div
-                    className={`whitespace-pre-wrap text-[13px] leading-5 ${
-                      message.role === "system" ? "text-[#e6f8c6]" : "text-zinc-100"
-                    }`}
-                  >
-                    {message.text || "..."}
+                ) : (
+                  <div className={`space-y-1 ${message.role === "assistant" ? "mr-12" : "ml-12"}`}>
+                    <div
+                      className={`flex flex-wrap gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] text-zinc-500 ${
+                        message.role === "assistant" ? "justify-start" : "justify-end"
+                      }`}
+                    >
+                      {codexMessagePhaseLabel(message) ? <span>{codexMessagePhaseLabel(message)}</span> : null}
+                      <span>{formatLocalTime(message.timestamp)}</span>
+                    </div>
+                    <div className="whitespace-pre-wrap text-[13px] leading-5 text-zinc-100">
+                      {message.text || "..."}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             ))
           )}
@@ -409,22 +426,43 @@ function ConversationPanel({ messages }: { messages: RealtimeMessage[] }) {
             messages.map((message) => (
               <div
                 key={message.id}
-                className={`border-b border-white/6 py-2 ${message.role === "assistant" ? "text-left" : "text-right"}`}
+                className={`border-b border-white/6 py-2 ${
+                  message.role === "assistant"
+                    ? "text-left"
+                    : message.role === "system"
+                      ? "text-left"
+                      : "text-right"
+                }`}
               >
-                <div className={`space-y-1 ${message.role === "assistant" ? "mr-12" : "ml-12"}`}>
-                  <div
-                    className={`flex flex-wrap gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] text-zinc-500 ${
-                      message.role === "assistant" ? "justify-start" : "justify-end"
-                    }`}
-                  >
-                    <span>{message.source}</span>
-                    <span>{messagePhaseLabel(message)}</span>
-                    <span>{formatLocalTime(message.timestamp)}</span>
+                {message.role === "system" ? (
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] ${
+                        handoffEventClasses(message.eventKind).badge
+                      }`}
+                    >
+                      {message.text}
+                    </span>
+                    <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                      {formatLocalTime(message.timestamp)}
+                    </span>
                   </div>
-                  <div className="whitespace-pre-wrap text-[13px] leading-5 text-zinc-100">
-                    {message.text || "..."}
+                ) : (
+                  <div className={`space-y-1 ${message.role === "assistant" ? "mr-12" : "ml-12"}`}>
+                    <div
+                      className={`flex flex-wrap gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] text-zinc-500 ${
+                        message.role === "assistant" ? "justify-start" : "justify-end"
+                      }`}
+                    >
+                      <span>{message.source}</span>
+                      {messagePhaseLabel(message) ? <span>{messagePhaseLabel(message)}</span> : null}
+                      <span>{formatLocalTime(message.timestamp)}</span>
+                    </div>
+                    <div className="whitespace-pre-wrap text-[13px] leading-5 text-zinc-100">
+                      {message.text || "..."}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             ))
           )}
@@ -482,6 +520,7 @@ export default function App() {
     toggleMicMuted,
     isAssistantSpeaking,
     skipAssistant,
+    addSystemMessage: addRealtimeSystemMessage,
   } = useOpenAIRealtime();
 
   const sdpHandlerRef = useRef<((sdp: string) => void) | null>(null);
@@ -693,21 +732,24 @@ export default function App() {
         queuedInterruptReplacementRef.current = latestFinalUserMessage.text;
         pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, turnId: activeTurnId };
         await interruptTurn(activeThread.id);
-        addSystemMessage("Voice interrupted current Codex turn. Replacement request queued.");
+        addSystemMessage("interrupt", "interrupt");
+        addRealtimeSystemMessage("interrupt", "interrupt");
         return;
       }
 
       if (routed.action === "codex_steer" && activeTurnStatus === "running" && activeTurnId) {
         pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, turnId: activeTurnId };
         await steerTurn(activeThread.id, latestFinalUserMessage.text);
-        addSystemMessage("Voice steered current Codex turn.");
+        addSystemMessage("steer", "steer");
+        addRealtimeSystemMessage("steer", "steer");
         return;
       }
 
       if (activeTurnStatus === "idle") {
         pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, turnId: null };
         await startTurn(activeThread.id, latestFinalUserMessage.text);
-        addSystemMessage("Voice started a new Codex turn.");
+        addSystemMessage("new turn", "start");
+        addRealtimeSystemMessage("new turn", "start");
       }
     };
 
@@ -718,6 +760,7 @@ export default function App() {
     activeTurnId,
     activeTurnStatus,
     addSystemMessage,
+    addRealtimeSystemMessage,
     agentEvents,
     codexMessages,
     interruptTurn,
@@ -738,12 +781,13 @@ export default function App() {
     const replacement = queuedInterruptReplacementRef.current;
     queuedInterruptReplacementRef.current = null;
     pendingCodexNarrationRef.current = { request: replacement, turnId: null };
-    addSystemMessage("Voice started replacement Codex turn.");
+    addSystemMessage("new turn", "start");
+    addRealtimeSystemMessage("new turn", "start");
 
     void startTurn(thread.id, replacement).catch((error) => {
       setThreadError((error as Error).message);
     });
-  }, [activeTurnStatus, addSystemMessage, startTurn, thread]);
+  }, [activeTurnStatus, addRealtimeSystemMessage, addSystemMessage, startTurn, thread]);
 
   useEffect(() => {
     if (activeTurnStatus !== "idle") return;
