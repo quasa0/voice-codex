@@ -50,6 +50,7 @@ export function useOpenAIRealtime() {
   const [isMicMuted, setIsMicMuted] = useState(true);
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -123,6 +124,7 @@ export function useOpenAIRealtime() {
     isMicMutedRef.current = true;
     setConnectedAt(null);
     setElapsedSeconds(0);
+    setIsAssistantSpeaking(false);
 
     setStatus(nextStatus);
   }, []);
@@ -306,6 +308,14 @@ export function useOpenAIRealtime() {
             }
           }
 
+          if (type === "output_audio_buffer.started") {
+            setIsAssistantSpeaking(true);
+          }
+
+          if (type === "output_audio_buffer.stopped" || type === "response.output_audio.done" || type === "response.done") {
+            setIsAssistantSpeaking(false);
+          }
+
         } catch {
           addLog("server", "event", String(event.data));
         }
@@ -407,6 +417,18 @@ export function useOpenAIRealtime() {
     setMicMuted(!isMicMuted);
   }, [isMicMuted, setMicMuted]);
 
+  const skipAssistant = useCallback(() => {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== "open") {
+      throw new Error("OpenAI Realtime data channel is not open");
+    }
+
+    const cancelEvent = { type: "response.cancel" };
+    dc.send(JSON.stringify(cancelEvent));
+    addLog("client", "response.cancel", JSON.stringify(cancelEvent, null, 2));
+    setIsAssistantSpeaking(false);
+  }, [addLog]);
+
   useEffect(() => {
     if (!connectedAt) return;
     const interval = window.setInterval(() => {
@@ -432,5 +454,7 @@ export function useOpenAIRealtime() {
     sendText,
     setMicMuted,
     toggleMicMuted,
+    isAssistantSpeaking,
+    skipAssistant,
   };
 }

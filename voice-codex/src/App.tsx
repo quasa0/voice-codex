@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, Cable, Mic, MicOff, Play, Radio, Send, Square, TerminalSquare, WandSparkles } from "lucide-react";
+import { Activity, Cable, Mic, MicOff, Play, Radio, Send, SkipForward, Square, TerminalSquare, WandSparkles } from "lucide-react";
 import { useCodexWebSocket } from "./useCodexWebSocket";
 import { useOpenAIRealtime } from "./useOpenAIRealtime";
 import type { LogEntry, AgentEvent, ModelInfo, CodexMessage } from "./types";
@@ -407,6 +407,8 @@ export default function App() {
     requestResponse: requestRealtimeResponse,
     sendText: sendRealtimeText,
     toggleMicMuted,
+    isAssistantSpeaking,
+    skipAssistant,
   } = useOpenAIRealtime();
 
   const sdpHandlerRef = useRef<((sdp: string) => void) | null>(null);
@@ -794,6 +796,23 @@ export default function App() {
                       }}
                     />
                     <Button
+                      size="default"
+                      variant="outline"
+                      className="h-12 shrink-0 rounded-[1rem] border-white/10 bg-[#1f2623] px-4 text-zinc-100 hover:bg-[#252d29]"
+                      onClick={() => {
+                        try {
+                          skipAssistant();
+                        } catch (error) {
+                          console.error(error);
+                        }
+                      }}
+                      disabled={!isAssistantSpeaking}
+                      title="Skip assistant audio"
+                    >
+                      <SkipForward className="size-4" />
+                      Skip
+                    </Button>
+                    <Button
                       size="icon-lg"
                       variant="outline"
                       className="size-12 shrink-0 rounded-[1rem] border-white/10 bg-[#1f2623] text-zinc-100 hover:bg-[#252d29]"
@@ -802,15 +821,6 @@ export default function App() {
                       title="Send Text"
                     >
                       <Send className="size-4.5" />
-                    </Button>
-                    <Button
-                      size="icon-lg"
-                      variant="destructive"
-                      className="size-12 shrink-0 rounded-[1rem] border-red-500/22 bg-[#5a2e28] text-red-100 hover:bg-[#6a342d]"
-                      onClick={() => disconnectRealtime()}
-                      title="Stop Realtime"
-                    >
-                      <Square className="size-4.5" />
                     </Button>
                   </div>
                 </>
@@ -821,6 +831,18 @@ export default function App() {
                   {realtimeError}
                 </div>
               ) : null}
+
+              <div className="flex justify-end">
+                <Button
+                  variant="destructive"
+                  className="h-10 rounded-full border-red-500/22 bg-[#5a2e28] px-4 text-red-100 hover:bg-[#6a342d]"
+                  onClick={() => disconnectRealtime()}
+                  title="End call"
+                >
+                  <Square className="size-4" />
+                  End call
+                </Button>
+              </div>
 
               <ConversationPanel messages={realtimeMessages} />
             </PanelShell>
