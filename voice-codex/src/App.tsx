@@ -721,7 +721,7 @@ function formatStatusLabel(value: string) {
 function TimestampLabel({ timestamp, className = "" }: { timestamp: string; className?: string }) {
   return (
     <span
-      className={`font-mono tracking-[0.04em] text-zinc-500 ${className}`.trim()}
+      className={`font-mono tracking-[0.04em] text-[#8a9099] ${className}`.trim()}
       style={{ fontSize: "10.5px", lineHeight: 1 }}
     >
       {formatLocalTime(timestamp)}
@@ -761,57 +761,57 @@ function codexMessageKindLabel(message: CodexMessage) {
 }
 
 function codexMessageKindClass(kind?: CodexMessageKind) {
-  if (kind === "edit") return "border-[#b9f075]/20 bg-[#b9f075]/10 text-[#d8f5ab]";
-  if (kind === "read") return "border-sky-300/20 bg-sky-300/10 text-sky-100";
-  if (kind === "command") return "border-zinc-400/20 bg-zinc-400/10 text-zinc-200";
-  if (kind === "plan") return "border-fuchsia-300/20 bg-fuchsia-300/10 text-fuchsia-100";
-  if (kind === "error") return "border-red-300/20 bg-red-300/10 text-red-100";
-  return "border-zinc-400/20 bg-zinc-400/10 text-zinc-200";
+  if (kind === "edit") return "border border-[#c4e5d1] bg-[#e2f5ea] text-[#1e6b3f]";
+  if (kind === "read") return "border border-[#c8dcf5] bg-[#e4efff] text-[#1f5da8]";
+  if (kind === "command") return "border border-[#e1e4e8] bg-[#eceef1] text-[#4b4f55]";
+  if (kind === "plan") return "border border-[#e1c8ec] bg-[#f1e4f7] text-[#7a3fa1]";
+  if (kind === "error") return "border border-[#e7c6c6] bg-[#fbe5e5] text-[#8a2a2a]";
+  return "border border-[#e1e4e8] bg-[#eceef1] text-[#4b4f55]";
 }
 
 function statusDotClass(status: string) {
-  if (status === "connected" || status === "active" || status === "apiKey") return "bg-[#b9f075]";
-  if (status === "connecting" || status === "requesting-mic") return "bg-[#d0ef9e]";
-  if (status === "error") return "bg-red-300";
-  return "bg-zinc-400";
+  if (status === "connected" || status === "active" || status === "apiKey") return "bg-[#2fa860]";
+  if (status === "connecting" || status === "requesting-mic") return "bg-[#9fcfb1]";
+  if (status === "error") return "bg-[#c83f3f]";
+  return "bg-[#c4c9cf]";
 }
 
 function panelBadgeClass() {
-  return "h-8 rounded-full border-[#b9f075]/20 bg-[#b9f075]/10 px-3 text-[13px] font-medium text-[#d8f5ab]";
+  return "h-6 rounded-full border border-[#e1e4e8] bg-white px-2.5 text-[11.5px] font-medium text-[#1f2328]";
 }
 
 function eventToneClass(method?: string) {
-  if (!method) return "text-zinc-400";
-  if (method.startsWith("turn/")) return "text-white";
-  if (method.startsWith("item/fileChange")) return "text-zinc-200";
-  if (method.startsWith("item/commandExecution")) return "text-zinc-300";
-  if (method.startsWith("item/agentMessage")) return "text-zinc-100";
-  if (method === "thread/realtime/sdp") return "text-zinc-200";
-  return "text-zinc-400";
+  if (!method) return "text-[#8a9099]";
+  if (method.startsWith("turn/")) return "text-[#1f2328]";
+  if (method.startsWith("item/fileChange")) return "text-[#1e6b3f]";
+  if (method.startsWith("item/commandExecution")) return "text-[#565c66]";
+  if (method.startsWith("item/agentMessage")) return "text-[#1f2328]";
+  if (method === "thread/realtime/sdp") return "text-[#1f5da8]";
+  return "text-[#8a9099]";
 }
 
 function handoffEventClasses(kind?: "start" | "steer" | "interrupt" | "interrupted" | "refreshed") {
   if (kind === "interrupted" || kind === "refreshed") {
     return {
-      badge: "",
-      text: "text-zinc-500",
+      badge: "border border-[#e1e4e8] bg-white text-[#8a9099]",
+      text: "text-[#8a9099]",
     };
   }
   if (kind === "steer") {
     return {
-      badge: "border-[#7fe38b]/20 bg-[#7fe38b]/10 text-[#bff6b9]",
-      text: "text-[#d8f7d0]",
+      badge: "border border-[#c4e5d1] bg-[#e2f5ea] text-[#1e6b3f]",
+      text: "text-[#1e6b3f]",
     };
   }
   if (kind === "interrupt") {
     return {
-      badge: "border-orange-400/20 bg-orange-400/10 text-orange-200",
-      text: "text-orange-100",
+      badge: "border border-[#eccfb0] bg-[#fbefd9] text-[#8a5a1a]",
+      text: "text-[#8a5a1a]",
     };
   }
   return {
-    badge: "border-pink-400/20 bg-pink-400/10 text-pink-200",
-    text: "text-pink-100",
+    badge: "border border-[#eacfe0] bg-[#f7e9f2] text-[#8a3fa1]",
+    text: "text-[#8a3fa1]",
   };
 }
 
@@ -837,12 +837,12 @@ function RealtimeWaveBars({
         return (
           <span
             key={`${index}-${height}`}
-            className={`rounded-full ${active ? "bg-[#b9f075]" : "bg-zinc-500/65"}`}
+            className={`rounded-full ${active ? "bg-[#2fa860]" : "bg-[#c4c9cf]"}`}
             style={{
               width: `${barWidth}px`,
               height: `${renderedHeight}px`,
               animation: active ? `realtime-wave 1.15s ease-in-out ${index * 0.08}s infinite` : "none",
-              boxShadow: active ? "0 0 10px rgba(185,240,117,0.22)" : "none",
+              boxShadow: active ? "0 0 0 2px rgba(47,168,96,0.22)" : "none",
               transformOrigin: "center",
             }}
           />
@@ -862,13 +862,13 @@ function RealtimeStatusBadge({
   const active = realtimeStatus === "active";
 
   return (
-    <div className="flex w-[150px] items-center gap-3 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+    <div className="flex h-7 w-[150px] items-center gap-2 rounded-full border border-[#e1e4e8] bg-white px-2.5 shadow-[0_1px_0_rgba(18,22,28,0.02)]">
       <div className="w-[52px]">
         <RealtimeWaveBars isMuted={isMuted} isActive={active} compact />
       </div>
       <div className="space-y-0.5">
-        <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">voice</div>
-        <div className="text-[14px] font-semibold leading-none text-zinc-100">{isMuted ? "muted" : "live"}</div>
+        <div className="text-[10px] uppercase leading-none tracking-[0.14em] text-[#8a9099]">voice</div>
+        <div className="text-[12px] font-semibold leading-none text-[#1f2328]">{isMuted ? "muted" : "live"}</div>
       </div>
     </div>
   );
@@ -884,12 +884,12 @@ function CodexStatusGlyph({ codexState }: { codexState: CodexSegmentState }) {
     <div className="flex w-[52px] items-center justify-center gap-[3px]">
       {bars.map((height, index) => {
         const barClass = failed
-          ? "bg-red-300/85"
+          ? "bg-[#c83f3f]"
           : waiting
-            ? "bg-orange-300/85"
+            ? "bg-[#c77a1b]"
             : active
-              ? "bg-[#b9f075]"
-              : "bg-zinc-500/65";
+              ? "bg-[#2fa860]"
+              : "bg-[#c4c9cf]";
 
         const renderedHeight = active ? Math.max(8, Math.round(18 * height)) : waiting ? Math.max(8, Math.round(14 * height)) : 8;
         return (
@@ -905,7 +905,7 @@ function CodexStatusGlyph({ codexState }: { codexState: CodexSegmentState }) {
                   : waiting
                     ? `codex-status-breathe 1.6s ease-in-out ${index * 0.1}s infinite`
                     : "none",
-              boxShadow: active ? "0 0 10px rgba(185,240,117,0.22)" : waiting ? "0 0 10px rgba(253,186,116,0.18)" : "none",
+              boxShadow: active ? "0 0 0 2px rgba(47,168,96,0.22)" : waiting ? "0 0 0 2px rgba(199,122,27,0.16)" : "none",
               transformOrigin: "center",
             }}
           />
@@ -926,11 +926,11 @@ function CodexStatusBadge({ codexState }: { codexState: CodexSegmentState }) {
           : codexState;
 
   return (
-    <div className="flex w-[150px] items-center gap-3 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+    <div className="flex h-7 w-[150px] items-center gap-2 rounded-full border border-[#e1e4e8] bg-white px-2.5 shadow-[0_1px_0_rgba(18,22,28,0.02)]">
       <CodexStatusGlyph codexState={codexState} />
       <div className="space-y-0.5">
-        <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">codex</div>
-        <div className="text-[14px] font-semibold leading-none text-zinc-100">{label}</div>
+        <div className="text-[10px] uppercase leading-none tracking-[0.14em] text-[#8a9099]">codex</div>
+        <div className="text-[12px] font-semibold leading-none text-[#1f2328]">{label}</div>
       </div>
     </div>
   );
@@ -968,19 +968,19 @@ function PanelShell({
   contentClassName?: string;
 }) {
   return (
-    <Card className="h-full border-white/8 bg-[#1d2421]/92 shadow-2xl shadow-black/20 backdrop-blur-sm">
+    <Card className="h-full rounded-md border border-[#e1e4e8] bg-white shadow-[0_1px_2px_rgba(18,22,28,0.04)]">
       <CardHeader className="space-y-1 pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
             {icon ? (
-              <div className="flex size-7 items-center justify-center rounded-xl border border-white/8 bg-white/[0.03] text-zinc-100">
+              <div className="flex size-7 items-center justify-center rounded-md border border-[#e1e4e8] bg-[#f2f3f5] text-[#1f2328]">
                 {icon}
               </div>
             ) : null}
             <div>
-              <CardTitle className="text-[1.05rem] font-semibold tracking-tight text-zinc-50">{title}</CardTitle>
+              <CardTitle className="text-[14px] font-semibold tracking-tight text-[#1f2328]">{title}</CardTitle>
               {description ? (
-                <CardDescription className="text-sm leading-5 text-zinc-400/90">{description}</CardDescription>
+                <CardDescription className="text-[12px] leading-5 text-[#565c66]">{description}</CardDescription>
               ) : null}
             </div>
           </div>
@@ -1124,8 +1124,8 @@ function CodexConversationPanel({
   const statusLabel = getSegmentStatusLabel(activeSegment);
   const animateWorkingRow = activeSegment?.codexState === "running";
   const workingIndicatorClass = animateWorkingRow
-    ? "bg-[#b9f075] shadow-[0_0_8px_rgba(185,240,117,0.4)]"
-    : "bg-zinc-600/80 shadow-none";
+    ? "bg-[#2fa860] shadow-[0_0_0_3px_rgba(47,168,96,0.18)]"
+    : "bg-[#c4c9cf] shadow-none";
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -1135,14 +1135,14 @@ function CodexConversationPanel({
   }, [messages, activeSegment?.id, activeSegment?.updatedAt]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-[1.55rem] border border-white/8 bg-[#171d1b] px-4 py-4">
+    <div className="flex h-full min-h-0 flex-col rounded-md border border-[#e1e4e8] bg-[#f7f8fa] px-3 py-3">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
         <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-4"}>
           {messages.length === 0 ? (
             <div className="flex min-h-full items-center justify-center text-center">
               <div className="max-w-md space-y-2 px-6">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-zinc-600">conversation</div>
-                <div className="text-[15px] text-zinc-500">No Codex messages yet.</div>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-[#8a9099]">conversation</div>
+                <div className="text-[14px] text-[#565c66]">No Codex messages yet.</div>
               </div>
             </div>
           ) : (
@@ -1165,7 +1165,7 @@ function CodexConversationPanel({
                 ) : (
                   <>
                     <div
-                      className={`flex items-baseline gap-2 text-[11px] leading-none text-zinc-500 ${
+                      className={`flex items-baseline gap-2 text-[11px] leading-none text-[#8a9099] ${
                         message.role === "assistant" ? "justify-start" : "justify-end"
                       }`}
                     >
@@ -1181,18 +1181,16 @@ function CodexConversationPanel({
                         message.status === "streaming" ? (
                           <StreamingPhaseLabel label={codexMessagePhaseLabel(message) ?? "streaming"} />
                         ) : (
-                          <span className="text-zinc-500">{codexMessagePhaseLabel(message)}</span>
+                          <span className="text-[#8a9099]">{codexMessagePhaseLabel(message)}</span>
                         )
                       ) : null}
                     </div>
                     <div
-                      className={`whitespace-pre-wrap text-[15px] leading-[1.65] ${
-                        message.role === "assistant" ? "text-zinc-100" : "text-zinc-300"
-                      }`}
+                      className="whitespace-pre-wrap text-[13.5px] leading-[1.6] text-[#1f2328]"
                     >
                       {message.text || "..."}
                       {message.role === "assistant" && message.status === "streaming" ? (
-                        <span className="ml-1 inline-block h-[14px] w-[6px] animate-pulse align-[-2px] rounded-sm bg-[#b9f075]" />
+                        <span className="ml-1 inline-block h-[14px] w-[6px] animate-pulse align-[-2px] rounded-sm bg-[#2f7bd9]" />
                       ) : null}
                     </div>
                   </>
@@ -1203,21 +1201,21 @@ function CodexConversationPanel({
           {messages.length > 0 ? (
             <div className="py-1.5">
               <div
-                className={`relative flex min-h-6 w-full items-center gap-3 overflow-hidden rounded-full border border-[#b9f075]/10 bg-[#b9f075]/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-zinc-500 ${
+                className={`relative flex min-h-6 w-full items-center gap-3 overflow-hidden rounded-full border border-[#e1e4e8] bg-white px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-[#8a9099] ${
                   animateWorkingRow ? "codex-working-row" : ""
                 }`}
               >
                 {animateWorkingRow ? (
                   <span
                     aria-hidden="true"
-                    className="pointer-events-none absolute inset-y-0 left-[-24%] w-[24%] bg-[linear-gradient(90deg,transparent,rgba(185,240,117,0.14),transparent)] codex-working-sheen"
+                    className="pointer-events-none absolute inset-y-0 left-[-24%] w-[24%] bg-[linear-gradient(90deg,transparent,rgba(47,168,96,0.14),transparent)] codex-working-sheen"
                   />
                 ) : null}
-                <span className="relative shrink-0 font-medium text-[#d8f5ab]">{statusLabel}</span>
+                <span className="relative shrink-0 font-medium text-[#1e6b3f]">{statusLabel}</span>
                 <span
                   className={`relative size-1.5 shrink-0 rounded-full ${workingIndicatorClass} ${animateWorkingRow ? "codex-working-dot" : ""}`}
                 />
-                <span className="min-w-0 flex-1 truncate text-zinc-300">{workingLabel}</span>
+                <span className="min-w-0 flex-1 truncate normal-case tracking-normal text-[#1f2328]">{workingLabel}</span>
                 {activeSegment ? <TimestampLabel timestamp={activeSegment.updatedAt} className="shrink-0" /> : null}
               </div>
             </div>
@@ -1238,14 +1236,14 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
   }, [messages]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-[1.55rem] border border-white/8 bg-[#171d1b] px-4 py-4">
+    <div className="flex h-full min-h-0 flex-col rounded-md border border-[#e1e4e8] bg-[#f7f8fa] px-3 py-3">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
         <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-4"}>
           {messages.length === 0 ? (
             <div className="flex min-h-full items-center justify-center text-center">
               <div className="max-w-md space-y-2 px-6">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-zinc-600">conversation</div>
-                <div className="text-[15px] text-zinc-500">No conversation messages yet.</div>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-[#8a9099]">conversation</div>
+                <div className="text-[14px] text-[#565c66]">No conversation messages yet.</div>
               </div>
             </div>
           ) : (
@@ -1268,12 +1266,12 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
                 ) : (
                   <>
                     <div
-                      className={`flex items-baseline gap-2 text-[11px] leading-none text-zinc-500 ${
+                      className={`flex items-baseline gap-2 text-[11px] leading-none text-[#8a9099] ${
                         message.role === "user" ? "justify-end" : "justify-start"
                       }`}
                     >
                       {message.role === "user" ? (
-                        <span className="rounded-full border border-white/8 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-400">
+                        <span className="rounded-full border border-[#e1e4e8] bg-white px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-[#565c66]">
                           {message.source}
                         </span>
                       ) : null}
@@ -1282,18 +1280,16 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
                         message.status === "streaming" ? (
                           <StreamingPhaseLabel label={messagePhaseLabel(message) ?? "streaming"} />
                         ) : (
-                          <span className="text-zinc-500">{messagePhaseLabel(message)}</span>
+                          <span className="text-[#8a9099]">{messagePhaseLabel(message)}</span>
                         )
                       ) : null}
                     </div>
                     <div
-                      className={`whitespace-pre-wrap text-[15px] leading-[1.65] ${
-                        message.role === "assistant" ? "text-zinc-100" : "text-zinc-300"
-                      }`}
+                      className="whitespace-pre-wrap text-[13.5px] leading-[1.6] text-[#1f2328]"
                     >
                       {message.text || "..."}
                       {message.role === "assistant" && message.status === "streaming" ? (
-                        <span className="ml-1 inline-block h-[14px] w-[6px] animate-pulse align-[-2px] rounded-sm bg-[#b9f075]" />
+                        <span className="ml-1 inline-block h-[14px] w-[6px] animate-pulse align-[-2px] rounded-sm bg-[#2f7bd9]" />
                       ) : null}
                     </div>
                   </>
@@ -2136,11 +2132,11 @@ export default function App() {
   };
 
   return (
-    <div className={`dark bg-transparent text-zinc-50 ${paneOnlyMode ? "h-screen overflow-hidden" : "min-h-screen"}`}>
+    <div className={`bg-[#f7f8fa] text-[#1f2328] ${paneOnlyMode ? "h-screen overflow-hidden" : "min-h-screen"}`}>
       <style>{`
         @keyframes streaming-label-pulse {
-          0%, 100% { color: rgba(185, 240, 117, 0.78); text-shadow: 0 0 0 rgba(185, 240, 117, 0); }
-          50% { color: rgba(216, 245, 171, 1); text-shadow: 0 0 10px rgba(185, 240, 117, 0.28); }
+          0%, 100% { color: rgba(47, 123, 217, 0.72); text-shadow: 0 0 0 rgba(47, 123, 217, 0); }
+          50% { color: rgba(47, 123, 217, 1); text-shadow: 0 0 10px rgba(47, 123, 217, 0.18); }
         }
         @keyframes streaming-dot-fade {
           0%, 20% { opacity: 0.18; }
@@ -2160,8 +2156,8 @@ export default function App() {
           50% { transform: scaleY(1); opacity: 1; }
         }
         @keyframes codex-working-dot {
-          0%, 100% { transform: scale(0.92); opacity: 0.68; box-shadow: 0 0 0 rgba(185,240,117,0); }
-          50% { transform: scale(1.18); opacity: 1; box-shadow: 0 0 14px rgba(185,240,117,0.45); }
+          0%, 100% { transform: scale(0.92); opacity: 0.68; box-shadow: 0 0 0 rgba(47,168,96,0); }
+          50% { transform: scale(1.18); opacity: 1; box-shadow: 0 0 0 6px rgba(47,168,96,0.14); }
         }
         @keyframes codex-working-sheen {
           0% { transform: translateX(0); opacity: 0; }
@@ -2170,8 +2166,8 @@ export default function App() {
           100% { transform: translateX(520%); opacity: 0; }
         }
         @keyframes codex-working-border {
-          0%, 100% { border-color: rgba(185,240,117,0.08); background-color: rgba(185,240,117,0.04); }
-          50% { border-color: rgba(185,240,117,0.18); background-color: rgba(185,240,117,0.07); }
+          0%, 100% { border-color: rgba(225,228,232,1); background-color: rgba(255,255,255,1); }
+          50% { border-color: rgba(196,229,209,1); background-color: rgba(226,245,234,0.6); }
         }
         .codex-working-row {
           animation: codex-working-border 2.6s ease-in-out infinite;
@@ -2199,17 +2195,17 @@ export default function App() {
       `}</style>
       <div className={`flex flex-col gap-4 ${paneOnlyMode ? "h-full w-full px-3 py-3 sm:px-4 lg:px-5" : "mx-auto max-w-[1180px] px-3 py-4 sm:px-5 lg:px-6"}`}>
         {!paneOnlyMode ? (
-          <Card className="overflow-hidden border-white/8 bg-[#1b221f]/96 shadow-xl shadow-black/20">
+          <Card className="overflow-hidden border border-[#e1e4e8] bg-white shadow-[0_1px_2px_rgba(18,22,28,0.04)]">
             <CardContent className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="max-w-3xl space-y-3">
-                <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-zinc-300">
+                <Badge variant="outline" className="border border-[#e1e4e8] bg-white text-[#565c66]">
                   Shack15 Hackathon Build
                 </Badge>
                 <div className="space-y-1.5">
-                  <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl lg:text-[2.1rem]">
+                  <h1 className="text-2xl font-semibold tracking-tight text-[#1f2328] sm:text-3xl lg:text-[2.1rem]">
                     Voice Codex
                   </h1>
-                  <p className="max-w-2xl text-sm leading-6 text-zinc-400/90">
+                  <p className="max-w-2xl text-sm leading-6 text-[#565c66]">
                     A dark realtime control room for OpenAI voice sessions and local Codex threads. The voice lane is live today,
                     and the Codex lane stays intact for the next step: wiring spoken intent into local coding workflows.
                   </p>
@@ -2233,7 +2229,7 @@ export default function App() {
                 <div className="flex min-h-[11rem] items-center justify-center">
                   <Button
                     size="lg"
-                    className="bg-[#b9f075] px-6 text-[#213024] hover:bg-[#c9f589]"
+                    className="bg-[#2fa860] px-6 text-white hover:bg-[#258a4f]"
                     onClick={() => void handleStartRealtime()}
                   >
                     <Play className="size-5" />
@@ -2256,12 +2252,12 @@ export default function App() {
                     </div>
 
                     <div className="flex items-center gap-3">
-                      <span className="text-[13px] font-medium text-zinc-500">
+                      <span className="text-[11.5px] font-medium text-[#565c66]">
                         {realtimeConnectedAt ? formatDuration(realtimeElapsedSeconds) : "--:--"}
                       </span>
                       <Button
                         variant="outline"
-                        className="h-8 rounded-full border border-white/12 bg-[#222925] px-3 text-[13px] font-medium text-zinc-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] hover:bg-[#28312b]"
+                        className="h-[26px] rounded-md border border-[#d3d7dc] bg-white px-3 text-[12px] font-medium text-[#1f2328] hover:bg-[#f2f3f5]"
                         onClick={() => void handleClearChat()}
                         title="Clear chat"
                       >
@@ -2270,7 +2266,7 @@ export default function App() {
                       </Button>
                       <Button
                         variant="destructive"
-                        className="h-8 rounded-full border border-red-400/35 bg-[#5a2e28] px-3 text-[13px] font-medium text-red-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:bg-[#6a342d]"
+                        className="h-[26px] rounded-md border border-[#e7c6c6] bg-[#fbf1f1] px-3 text-[12px] font-medium text-[#8a2a2a] hover:bg-[#f6e2e2]"
                         onClick={() => {
                           const nextIntent = { ...persistedReconnectIntentRef.current, shouldReconnectRealtime: false };
                           persistedReconnectIntentRef.current = nextIntent;
@@ -2285,13 +2281,13 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 rounded-[1.1rem] border border-white/10 bg-[#1d2421] p-2 shadow-[0_14px_40px_rgba(0,0,0,0.26)]">
+                  <div className="flex items-center gap-2 rounded-md border border-[#e1e4e8] bg-white p-1.5 shadow-[0_1px_2px_rgba(18,22,28,0.04)]">
                     <button
                       type="button"
-                      className={`flex size-10 shrink-0 items-center justify-center rounded-[0.9rem] border transition ${
+                      className={`flex size-8 shrink-0 items-center justify-center rounded-md border transition ${
                         !isMicMuted && realtimeStatus === "active"
-                          ? "border-transparent bg-[#b9f075] text-black shadow-[0_0_0_4px_rgba(185,240,117,0.18)]"
-                          : "border-white/10 bg-[#222925] text-zinc-100 hover:bg-[#272f2a]"
+                          ? "border-[#c4e5d1] bg-[#e2f5ea] text-[#1e6b3f] shadow-[0_0_0_3px_rgba(47,168,96,0.18)]"
+                          : "border-[#d3d7dc] bg-white text-[#565c66] hover:bg-[#f2f3f5]"
                       }`}
                       onClick={toggleMicMuted}
                       disabled={realtimeStatus !== "active"}
@@ -2303,7 +2299,7 @@ export default function App() {
                       ref={realtimeInputRef}
                       value={realtimeText}
                       onChange={(event) => setRealtimeText(event.target.value)}
-                      className="h-10 min-w-0 flex-1 rounded-[0.95rem] border border-white/10 bg-[#222925] px-4 text-[15px] text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-[#b9f075]/35 focus:ring-2 focus:ring-[#b9f075]/10"
+                      className="h-8 min-w-0 flex-1 rounded-md border border-[#d3d7dc] bg-white px-3 text-[13px] text-[#1f2328] outline-none transition placeholder:text-[#8a9099] focus:border-[#2f7bd9] focus:ring-2 focus:ring-[#2f7bd9]/20"
                       placeholder="Type to the realtime session"
                       onKeyDown={(event) => {
                         if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
@@ -2317,7 +2313,7 @@ export default function App() {
                     />
                     <button
                       type="button"
-                      className="flex size-10 shrink-0 items-center justify-center rounded-[0.9rem] border border-white/10 bg-[#222925] text-zinc-200 transition hover:bg-[#272f2a] disabled:cursor-not-allowed disabled:opacity-40"
+                      className="flex size-8 shrink-0 items-center justify-center rounded-md border border-[#d3d7dc] bg-white text-[#565c66] transition hover:bg-[#f2f3f5] disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={() => {
                         try {
                           skipAssistant();
@@ -2332,7 +2328,7 @@ export default function App() {
                     </button>
                     <button
                       type="button"
-                      className="flex size-10 shrink-0 items-center justify-center rounded-[0.9rem] border border-white/10 bg-[#222925] text-zinc-200 transition hover:bg-[#272f2a] disabled:cursor-not-allowed disabled:opacity-40"
+                      className="flex size-8 shrink-0 items-center justify-center rounded-md border border-[#d3d7dc] bg-white text-[#565c66] transition hover:bg-[#f2f3f5] disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={handleSendRealtimeText}
                       disabled={realtimeStatus !== "active" || !realtimeText.trim()}
                       title="Send Text"
@@ -2368,7 +2364,7 @@ export default function App() {
 
                 <Button
                   variant="destructive"
-                  className="h-8 rounded-full border border-red-400/35 bg-[#5a2e28] px-3 text-[13px] font-medium text-red-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:bg-[#6a342d] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="h-[26px] rounded-md border border-[#e7c6c6] bg-[#fbf1f1] px-3 text-[12px] font-medium text-[#8a2a2a] hover:bg-[#f6e2e2] disabled:cursor-not-allowed disabled:opacity-40"
                   onClick={() => {
                     if (!thread || activeTurnStatus !== "running") return;
                     void interruptTurn(thread.id).catch((error) => {
@@ -2387,11 +2383,11 @@ export default function App() {
                 <>
                   {thread ? (
                     <div className="flex min-h-0 flex-1 flex-col space-y-4">
-                      <div className="flex items-center gap-2 rounded-[1.1rem] border border-white/10 bg-[#1d2421] p-2 shadow-[0_14px_40px_rgba(0,0,0,0.26)]">
+                      <div className="flex items-center gap-2 rounded-md border border-[#e1e4e8] bg-white p-1.5 shadow-[0_1px_2px_rgba(18,22,28,0.04)]">
                         <input
                           value={codexTaskText}
                           onChange={(event) => setCodexTaskText(event.target.value)}
-                          className="h-10 min-w-0 flex-1 rounded-[0.95rem] border border-white/10 bg-[#222925] px-4 text-[15px] text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-[#b9f075]/35 focus:ring-2 focus:ring-[#b9f075]/10"
+                          className="h-8 min-w-0 flex-1 rounded-md border border-[#d3d7dc] bg-white px-3 text-[13px] text-[#1f2328] outline-none transition placeholder:text-[#8a9099] focus:border-[#2f7bd9] focus:ring-2 focus:ring-[#2f7bd9]/20"
                           placeholder="Type to the Codex thread"
                           onKeyDown={(event) => {
                             if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
@@ -2405,7 +2401,7 @@ export default function App() {
                         />
                         <button
                           type="button"
-                          className="flex size-10 shrink-0 items-center justify-center rounded-[0.9rem] border border-white/10 bg-[#222925] text-zinc-200 transition hover:bg-[#272f2a] disabled:cursor-not-allowed disabled:opacity-40"
+                          className="flex size-8 shrink-0 items-center justify-center rounded-md border border-[#d3d7dc] bg-white text-[#565c66] transition hover:bg-[#f2f3f5] disabled:cursor-not-allowed disabled:opacity-40"
                           onClick={() => {
                             void handleSendCodexTask();
                           }}
@@ -2421,7 +2417,7 @@ export default function App() {
                       </div>
                     </div>
                   ) : (
-                    <div className="rounded-xl border border-white/8 bg-[#171d1b] p-4 text-sm text-zinc-400">
+                    <div className="rounded-md border border-[#e1e4e8] bg-[#f7f8fa] p-4 text-sm text-[#565c66]">
                       Preparing Codex connection, logging in with the server API key, and starting the project thread.
                     </div>
                   )}
@@ -2453,14 +2449,14 @@ export default function App() {
       </div>
       {showExtraOverlay ? (
         <div className="pointer-events-none fixed bottom-4 right-4 z-[120]">
-          <div className="pointer-events-auto flex items-center gap-3 rounded-2xl border border-white/10 bg-[#151b18]/95 px-3 py-3 shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-md">
-            <div className="hidden text-[11px] font-medium tracking-[0.12em] text-zinc-500 sm:block">
+          <div className="pointer-events-auto flex items-center gap-3 rounded-xl border border-[#e1e4e8] bg-white/95 px-3 py-3 shadow-[0_8px_20px_rgba(18,22,28,0.08)] backdrop-blur-md">
+            <div className="hidden text-[11px] font-medium tracking-[0.12em] text-[#8a9099] sm:block">
               DEBUG
             </div>
             <button
               type="button"
-              className={`rounded-xl border border-white/10 bg-[#222925] p-2.5 text-zinc-100 transition hover:bg-[#2a332d] ${
-                copyLogsState === "copied" ? "text-[#b9f075]" : copyLogsState === "error" ? "text-red-300" : ""
+              className={`rounded-md border border-[#d3d7dc] bg-white p-2.5 text-[#565c66] transition hover:bg-[#f2f3f5] ${
+                copyLogsState === "copied" ? "text-[#2fa860]" : copyLogsState === "error" ? "text-[#c83f3f]" : ""
               }`}
               onClick={() => {
                 void handleCopyLogs();
