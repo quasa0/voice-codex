@@ -98,6 +98,38 @@ export function useCodexWebSocket() {
     setCodexMessages((prev) => [...prev, message]);
   }, []);
 
+  const appendStreamingProgressMessage = useCallback(
+    (itemId: string, delta: string, turnId: string | null, fallbackPrefix = "Streaming output") => {
+      if (!itemId || !delta) return;
+      const progressId = progressMessageIdByItemRef.current.get(itemId) ?? `progress-${itemId}`;
+      progressMessageIdByItemRef.current.set(itemId, progressId);
+
+      setCodexMessages((prev) => {
+        const existing = prev.find((message) => message.id === progressId);
+        if (existing) {
+          return prev.map((message) =>
+            message.id === progressId
+              ? { ...message, text: `${message.text}${delta}`, status: "streaming", turnId: message.turnId ?? turnId }
+              : message,
+          );
+        }
+
+        return [
+          ...prev,
+          {
+            id: progressId,
+            role: "assistant",
+            text: `${fallbackPrefix}\n${delta}`,
+            status: "streaming",
+            timestamp: nowTime(),
+            turnId,
+          },
+        ];
+      });
+    },
+    [],
+  );
+
   const addSystemMessage = useCallback((text: string, eventKind?: CodexMessage["eventKind"]) => {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -376,6 +408,22 @@ export function useCodexWebSocket() {
         }
       }
 
+      if (method === "item/commandExecution/outputDelta") {
+        const p = params as Record<string, unknown>;
+        const turnId = getEventTurnId(params);
+        const itemId = String(p.itemId ?? p.item_id ?? p.id ?? "");
+        const delta = String(p.delta ?? p.outputDelta ?? "");
+        appendStreamingProgressMessage(itemId, delta, turnId, "Command output");
+      }
+
+      if (method === "item/fileChange/outputDelta") {
+        const p = params as Record<string, unknown>;
+        const turnId = getEventTurnId(params);
+        const itemId = String(p.itemId ?? p.item_id ?? p.id ?? "");
+        const delta = String(p.delta ?? p.outputDelta ?? "");
+        appendStreamingProgressMessage(itemId, delta, turnId, "File change");
+      }
+
       if (method === "item/completed") {
         const turnId = getEventTurnId(params);
         const item = (params as { item?: Record<string, unknown> })?.item;
@@ -423,7 +471,7 @@ export function useCodexWebSocket() {
       setStatus("disconnected");
       wsRef.current = null;
     };
-  }, [addLog, addAgentEvent, appendCodexMessage, listModels, readAccount, upsertCodexMessage]);
+  }, [addLog, addAgentEvent, appendCodexMessage, appendStreamingProgressMessage, listModels, readAccount, upsertCodexMessage]);
 
   const disconnect = useCallback(() => {
     wsRef.current?.close();
