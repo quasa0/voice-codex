@@ -288,9 +288,9 @@ function buildExactCodexRelayReply(
 }
 
 function getSegmentWorkingLabel(segment: CodexSegment | null) {
-  if (!segment) return null;
+  if (!segment) return "idle";
   if (segment.codexState === "waiting_for_user") return "waiting for input...";
-  if (segment.codexState !== "running") return null;
+  if (segment.codexState !== "running") return "idle";
 
   const latestCommand = segment.commandsRun.at(-1);
   if (latestCommand) {
@@ -315,14 +315,14 @@ function getSegmentWorkingLabel(segment: CodexSegment | null) {
 }
 
 function getSegmentStatusLabel(segment: CodexSegment | null) {
-  if (!segment) return null;
+  if (!segment) return "idle";
   if (segment.codexState === "waiting_for_user") return "needs input";
   if (segment.codexState === "running") {
     if (segment.mode === "interrupt") return "switching";
     if (segment.mode === "steer") return "adjusting";
     return "working";
   }
-  return "update";
+  return "idle";
 }
 
 function buildSegmentSnapshot(segment: CodexSegment | null) {
@@ -740,6 +740,9 @@ function CodexConversationPanel({
   const workingLabel = getSegmentWorkingLabel(activeSegment);
   const statusLabel = getSegmentStatusLabel(activeSegment);
   const animateWorkingRow = activeSegment?.codexState === "running";
+  const workingIndicatorClass = animateWorkingRow
+    ? "bg-[#b9f075] shadow-[0_0_8px_rgba(185,240,117,0.4)]"
+    : "bg-zinc-600/80 shadow-none";
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -807,30 +810,26 @@ function CodexConversationPanel({
               </div>
             ))
           )}
-          {workingLabel ? (
-            <div className="py-1.5">
-              <div
-                className={`relative flex min-h-6 w-full items-center gap-3 overflow-hidden rounded-full border border-[#b9f075]/10 bg-[#b9f075]/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-zinc-500 ${
-                  animateWorkingRow ? "codex-working-row" : ""
-                }`}
-              >
-                {animateWorkingRow ? (
-                  <span
-                    aria-hidden="true"
-                    className="pointer-events-none absolute inset-y-0 left-[-24%] w-[24%] bg-[linear-gradient(90deg,transparent,rgba(185,240,117,0.14),transparent)] codex-working-sheen"
-                  />
-                ) : null}
-                <span className="relative shrink-0 font-medium text-[#d8f5ab]">{statusLabel}</span>
+          <div className="py-1.5">
+            <div
+              className={`relative flex min-h-6 w-full items-center gap-3 overflow-hidden rounded-full border border-[#b9f075]/10 bg-[#b9f075]/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-zinc-500 ${
+                animateWorkingRow ? "codex-working-row" : ""
+              }`}
+            >
+              {animateWorkingRow ? (
                 <span
-                  className={`relative size-1.5 shrink-0 rounded-full bg-[#b9f075] shadow-[0_0_8px_rgba(185,240,117,0.4)] ${
-                    animateWorkingRow ? "codex-working-dot" : ""
-                  }`}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 left-[-24%] w-[24%] bg-[linear-gradient(90deg,transparent,rgba(185,240,117,0.14),transparent)] codex-working-sheen"
                 />
-                <span className="min-w-0 flex-1 truncate text-zinc-300">{workingLabel}</span>
-                {activeSegment ? <TimestampLabel timestamp={activeSegment.updatedAt} className="shrink-0" /> : null}
-              </div>
+              ) : null}
+              <span className="relative shrink-0 font-medium text-[#d8f5ab]">{statusLabel}</span>
+              <span
+                className={`relative size-1.5 shrink-0 rounded-full ${workingIndicatorClass} ${animateWorkingRow ? "codex-working-dot" : ""}`}
+              />
+              <span className="min-w-0 flex-1 truncate text-zinc-300">{workingLabel}</span>
+              {activeSegment ? <TimestampLabel timestamp={activeSegment.updatedAt} className="shrink-0" /> : null}
             </div>
-          ) : null}
+          </div>
         </div>
       </div>
     </div>
