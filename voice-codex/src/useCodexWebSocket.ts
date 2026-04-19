@@ -276,16 +276,19 @@ export function useCodexWebSocket() {
     if (!segmentId) return;
     const firstLine = truncateLine(text);
     updateSegment(segmentId, (segment) => {
-      const blockingQuestion = status === "final" && messageRequestsUserInput(text) ? text.trim() : segment.blockingQuestion;
-      const finalOutcome =
-        status === "final" && !messageRequestsUserInput(text) && !isCodexProgressMessage(text) ? text.trim() : segment.finalOutcome;
+      const requestsInput = status === "final" && messageRequestsUserInput(text);
+      const isFinalSubstantiveAnswer = status === "final" && !requestsInput && !isCodexProgressMessage(text) && text.trim().length > 0;
+      const blockingQuestion = requestsInput ? text.trim() : isFinalSubstantiveAnswer ? null : segment.blockingQuestion;
+      const finalOutcome = isFinalSubstantiveAnswer ? text.trim() : segment.finalOutcome;
 
       return {
         ...segment,
         codexState:
-          status === "final" && messageRequestsUserInput(text)
+          requestsInput
             ? "waiting_for_user"
-            : segment.codexState === "waiting_for_user" && status === "streaming"
+            : isFinalSubstantiveAnswer
+              ? "completed"
+              : segment.codexState === "waiting_for_user" && status === "streaming"
               ? "running"
               : segment.codexState,
         latestMilestone: firstLine ?? segment.latestMilestone,
