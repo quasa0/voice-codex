@@ -162,6 +162,100 @@ function summarizeSegmentStatus(segment: CodexSegment | null, agentEvents: Agent
   return ["Codex is idle.", segment.finalOutcome, editSummary, readSummary].filter(Boolean).join(" ").slice(0, 360);
 }
 
+function getSegmentFirstLine(text: string | null | undefined) {
+  if (!text) return null;
+  return text.trim().split("\n").find(Boolean) ?? text.trim();
+}
+
+function buildSegmentReadEditSummary(segment: CodexSegment | null) {
+  if (!segment) return null;
+  const parts: string[] = [];
+  if (segment.filesEdited.length > 0) {
+    parts.push(
+      segment.filesEdited.length === 1
+        ? `Edited ${segment.filesEdited[0]}.`
+        : `Edited ${segment.filesEdited.slice(0, 2).join(" and ")}.`,
+    );
+  } else if (segment.filesRead.length > 0) {
+    parts.push(
+      segment.filesRead.length === 1
+        ? `Read ${segment.filesRead[0]}.`
+        : segment.filesRead.length === 2
+          ? `Read ${segment.filesRead[0]} and ${segment.filesRead[1]}.`
+          : `Read ${segment.filesRead.slice(0, -1).join(", ")}, and ${segment.filesRead.at(-1)}.`,
+    );
+  }
+  return parts.join(" ") || null;
+}
+
+function buildExactCodexRelayReply(
+  userMessage: string,
+  segment: CodexSegment | null,
+  agentEvents: AgentEvent[] = [],
+) {
+  if (!segment) return "Codex is idle right now.";
+
+  const normalized = userMessage.toLowerCase();
+  const asksAboutQuestion =
+    /\b(did|does|was|is)\b.*\b(ask|asked|question|clarify|clarification)\b/.test(normalized) ||
+    normalized.includes("clarify") ||
+    normalized.includes("clarification") ||
+    normalized.includes("ask me something");
+  const asksLastMessage =
+    normalized.includes("last message") ||
+    normalized.includes("last messsage") ||
+    normalized.includes("last reply") ||
+    normalized.includes("last response") ||
+    normalized.includes("what did it say") ||
+    normalized.includes("what was its last");
+  const asksWhatHappened =
+    normalized.includes("what happened") ||
+    normalized.includes("what changed") ||
+    normalized.includes("why did") ||
+    normalized.includes("did it interrupt") ||
+    normalized.includes("interrupt");
+
+  const blockingQuestion = getSegmentFirstLine(segment.blockingQuestion);
+  const finalOutcome = getSegmentFirstLine(segment.finalOutcome);
+  const latestMilestone = getSegmentFirstLine(segment.latestMilestone);
+  const readEditSummary = buildSegmentReadEditSummary(segment);
+
+  if (asksLastMessage) {
+    if (blockingQuestion) return `Codex's last message was: ${blockingQuestion}`;
+    if (finalOutcome) return `Codex's last message was: ${finalOutcome}`;
+    if (latestMilestone) return `Codex's latest update was: ${latestMilestone}`;
+    return "Codex has not produced a message for this segment yet.";
+  }
+
+  if (asksAboutQuestion) {
+    if (blockingQuestion) return `Yes. Codex asked: ${blockingQuestion}`;
+    return "No. Codex did not ask a clarification question in the current segment.";
+  }
+
+  if (asksWhatHappened) {
+    const lead =
+      segment.mode === "interrupt"
+        ? "Codex interrupted the previous task."
+        : segment.mode === "steer"
+          ? "Codex adjusted the current task."
+          : "Codex started a new task.";
+
+    if (blockingQuestion) {
+      return [lead, "It is waiting for input.", `It asked: ${blockingQuestion}`].join(" ").slice(0, 320);
+    }
+
+    if (finalOutcome) {
+      return [lead, `Latest result: ${finalOutcome}`, readEditSummary].filter(Boolean).join(" ").slice(0, 320);
+    }
+
+    if (latestMilestone) {
+      return [lead, `Latest step: ${latestMilestone}`, readEditSummary].filter(Boolean).join(" ").slice(0, 320);
+    }
+  }
+
+  return summarizeSegmentStatus(segment, agentEvents);
+}
+
 function getSegmentWorkingLabel(segment: CodexSegment | null) {
   if (!segment) return null;
   if (segment.codexState === "waiting_for_user") return "waiting for input...";
@@ -1002,23 +1096,30 @@ export default function App() {
 
       if (routed.action === "chat_only") {
         if (routed.chat_mode === "relay_codex_status") {
-          if (currentSegment && currentSegment.codexState === "running") {
-            setSegmentRelayState(currentSegment.id, "progress_spoken");
+          const exactReply = buildExactCodexRelayReply(latestFinalUserMessage.text, currentSegment, agentEvents);
+          if (currentSegment) {
+            if (currentSegment.blockingQuestion) {
+              setSegmentRelayState(currentSegment.id, "clarification_spoken");
+            } else if (currentSegment.codexState === "running") {
+              setSegmentRelayState(currentSegment.id, "progress_spoken");
+            }
           }
           sendRealtimeText(
-            `Summarize current Codex segment for the user in one or two short sentences. Explain what Codex is doing now or what just happened, based only on the structured segment state below. Mention the most relevant files or steps if present. Do not repeat the user's wording. Do not invent details.\n\nCurrent Codex status:\n${currentCodexStatus}\n\nCurrent segment:\n${JSON.stringify(buildSegmentSnapshot(currentSegment), null, 2)}`,
+            `Say exactly this to the user and nothing else:\n${exactReply}`,
             { requestResponse: true, visible: false },
           );
           return;
         }
 
         if (routed.chat_mode === "relay_latest_codex") {
-          const completedSegment = [...segments]
-            .reverse()
-            .find((segment) => segment.finalOutcome || segment.blockingQuestion);
-          if (completedSegment) {
+          const relevantSegment =
+            currentSegment ??
+            [...segments].reverse().find((segment) => segment.finalOutcome || segment.blockingQuestion || segment.latestMilestone) ??
+            null;
+          if (relevantSegment) {
+            const exactReply = buildExactCodexRelayReply(latestFinalUserMessage.text, relevantSegment, agentEvents);
             sendRealtimeText(
-              `Codex segment result available. Relay the exact substance to the user with no invention. Be terse.\n\nUser asked: ${latestFinalUserMessage.text}\n\nSegment:\n${JSON.stringify(buildSegmentSnapshot(completedSegment), null, 2)}`,
+              `Say exactly this to the user and nothing else:\n${exactReply}`,
               { requestResponse: true, visible: false },
             );
             return;
