@@ -110,6 +110,28 @@ function getSegmentMessages(codexMessages: CodexMessage[], segmentId?: string | 
   return codexMessages.filter((message) => message.segmentId === segmentId);
 }
 
+function messageLooksLikeQuestion(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (trimmed.includes("?")) return true;
+
+  const lowered = trimmed.toLowerCase();
+  return [
+    "could you clarify",
+    "can you clarify",
+    "please clarify",
+    "need clarity",
+    "need more direction",
+    "need more detail",
+    "which ",
+    "what kind",
+    "what would you like",
+    "what do you want",
+    "let me know if",
+    "if you want me to",
+  ].some((phrase) => lowered.includes(phrase));
+}
+
 function getSegmentEvents(agentEvents: AgentEvent[], segmentId?: string | null) {
   if (!segmentId) return [];
   return agentEvents.filter((event) => event.segmentId === segmentId);
@@ -191,6 +213,7 @@ function buildSegmentReadEditSummary(segment: CodexSegment | null) {
 function buildExactCodexRelayReply(
   userMessage: string,
   segment: CodexSegment | null,
+  segmentMessages: CodexMessage[] = [],
   agentEvents: AgentEvent[] = [],
 ) {
   if (!segment) return "Codex is idle right now.";
@@ -215,8 +238,16 @@ function buildExactCodexRelayReply(
     normalized.includes("did it interrupt") ||
     normalized.includes("interrupt");
 
-  const blockingQuestion = getSegmentFirstLine(segment.blockingQuestion);
-  const finalOutcome = getSegmentFirstLine(segment.finalOutcome);
+  const latestAssistantMessage = [...segmentMessages]
+    .reverse()
+    .find((message) => message.role === "assistant" && message.status === "final" && message.text.trim());
+  const latestAssistantLine = getSegmentFirstLine(latestAssistantMessage?.text);
+  const transcriptBlockingQuestion = latestAssistantLine && messageLooksLikeQuestion(latestAssistantLine) ? latestAssistantLine : null;
+  const blockingQuestion = transcriptBlockingQuestion ?? getSegmentFirstLine(segment.blockingQuestion);
+  const finalOutcome =
+    latestAssistantLine && !transcriptBlockingQuestion
+      ? latestAssistantLine
+      : getSegmentFirstLine(segment.finalOutcome);
   const latestMilestone = getSegmentFirstLine(segment.latestMilestone);
   const readEditSummary = buildSegmentReadEditSummary(segment);
 
@@ -1096,7 +1127,12 @@ export default function App() {
 
       if (routed.action === "chat_only") {
         if (routed.chat_mode === "relay_codex_status") {
-          const exactReply = buildExactCodexRelayReply(latestFinalUserMessage.text, currentSegment, agentEvents);
+          const exactReply = buildExactCodexRelayReply(
+            latestFinalUserMessage.text,
+            currentSegment,
+            getSegmentMessages(codexMessages, currentSegment?.id),
+            agentEvents,
+          );
           if (currentSegment) {
             if (currentSegment.blockingQuestion) {
               setSegmentRelayState(currentSegment.id, "clarification_spoken");
@@ -1117,7 +1153,12 @@ export default function App() {
             [...segments].reverse().find((segment) => segment.finalOutcome || segment.blockingQuestion || segment.latestMilestone) ??
             null;
           if (relevantSegment) {
-            const exactReply = buildExactCodexRelayReply(latestFinalUserMessage.text, relevantSegment, agentEvents);
+            const exactReply = buildExactCodexRelayReply(
+              latestFinalUserMessage.text,
+              relevantSegment,
+              getSegmentMessages(codexMessages, relevantSegment.id),
+              agentEvents,
+            );
             sendRealtimeText(
               `Say exactly this to the user and nothing else:\n${exactReply}`,
               { requestResponse: true, visible: false },
