@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pulse Calendar</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Inspired planning</p>
+        <h1>Pulse Calendar</h1>
+        <p>Glance at the month, spotlight inspiration, and drop ideas into today with a single tap.</p>
+      </div>
+      <div class="month-controls">
+        <button id="prev-month" aria-label="Previous month">←</button>
+        <div class="month-label" id="month-label"></div>
+        <button id="next-month" aria-label="Next month">→</button>
+      </div>
+    </header>
+
+    <section class="content-grid">
+      <div class="calendar-panel">
+        <div class="weekdays" aria-hidden="true">
+          <span>Sun</span>
+          <span>Mon</span>
+          <span>Tue</span>
+          <span>Wed</span>
+          <span>Thu</span>
+          <span>Fri</span>
+          <span>Sat</span>
+        </div>
+        <div class="calendar-grid" id="calendar-grid"></div>
+      </div>
+
+      <div class="events-panel">
+        <section class="day-preview">
+          <div>
+            <p class="eyebrow">Selected day</p>
+            <h2 id="selected-date"></h2>
+          </div>
+          <span id="event-count"></span>
+        </section>
+
+        <section class="events-list" id="events-list">
+          <p class="empty-state">Pick a date to see or add events.</p>
+        </section>
+
+        <form id="event-form" class="event-form">
+          <h3>Add quick event</h3>
+          <label>
+            <span>Title</span>
+            <input type="text" id="event-title" placeholder="Launch review" required />
+          </label>
+          <label>
+            <span>Time</span>
+            <input type="time" id="event-time" />
+          </label>
+          <label>
+            <span>Accent</span>
+            <input type="color" id="event-color" value="#ff8edb" />
+          </label>
+          <label>
+            <span>Notes</span>
+            <textarea id="event-notes" rows="2" placeholder="Add vibes, context, or links"></textarea>
+          </label>
+          <button type="submit">Save event</button>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
