@@ -132,12 +132,14 @@ async function routeIntentWithServerModel(payload: {
               'Prefer codex_steer for follow-up project questions or modifications when Codex is already running.',
               'Prefer codex_interrupt only when the user clearly redirects or replaces in-flight Codex work.',
               'Prefer chat_only only for casual conversation, generic knowledge, or pure voice-control requests like "stop", "stop yapping", "be quiet", or similar.',
+              'If the user asks what Codex is doing right now, current progress, current status, or similar, use action=chat_only and chat_mode=relay_codex_status.',
               'If the user asks to hear, repeat, summarize, or relay the latest Codex result, use action=chat_only and chat_mode=relay_latest_codex.',
               'Never invent project facts. If the question is about the local project, Codex should inspect it.',
               'If there is any meaningful uncertainty about whether the answer depends on local project context, choose Codex rather than chat_only.',
               'Do not let realtime answer from generic software knowledge when the user appears to mean this specific project.',
               'If the intent is ambiguous between generic knowledge and this project, prefer Codex or ask for clarification rather than allowing a guessed project answer.',
               'Examples that MUST route to Codex: "tell me about our todo app", "what files do we have", "how is this implemented", "what did Codex build", "explain this project".',
+              'Examples that should use relay_codex_status: "what is it doing right now", "what is Codex doing rn", "summarize current Codex activity".',
               'Examples that can stay chat_only: "stop", "thanks", "what is React", "explain CRUD generally".',
             ].join(' '),
         },
@@ -161,7 +163,7 @@ async function routeIntentWithServerModel(payload: {
               },
               chat_mode: {
                 type: 'string',
-                enum: ['normal', 'relay_latest_codex'],
+                enum: ['normal', 'relay_latest_codex', 'relay_codex_status'],
               },
               reason: { type: 'string' },
             },
@@ -187,7 +189,7 @@ async function routeIntentWithServerModel(payload: {
 
   return JSON.parse(content) as {
     action: 'chat_only' | 'codex_start' | 'codex_steer' | 'codex_interrupt'
-    chat_mode: 'normal' | 'relay_latest_codex'
+    chat_mode: 'normal' | 'relay_latest_codex' | 'relay_codex_status'
     reason: string
   }
 }

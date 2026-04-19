@@ -57,9 +57,55 @@ type RealtimeMessage = {
 type CodexIntentAction = "chat_only" | "codex_start" | "codex_steer" | "codex_interrupt";
 type RoutedIntent = {
   action: CodexIntentAction;
-  chat_mode: "normal" | "relay_latest_codex";
+  chat_mode: "normal" | "relay_latest_codex" | "relay_codex_status";
   reason: string;
 };
+
+function summarizeCurrentCodexActivity(
+  activeTurnStatus: "idle" | "running" | "error",
+  agentEvents: AgentEvent[],
+  codexMessages: CodexMessage[],
+) {
+  if (activeTurnStatus !== "running") {
+    const latestCodexReply = [...codexMessages]
+      .reverse()
+      .find((message) => message.role === "assistant" && message.status === "final" && message.text.trim());
+
+    if (latestCodexReply) {
+      const firstLine = latestCodexReply.text.trim().split("\n").find(Boolean) ?? latestCodexReply.text.trim();
+      return `Codex is idle. Latest result: ${firstLine}`.slice(0, 320);
+    }
+
+    return "Codex is idle right now.";
+  }
+
+  const recentEvents = [...agentEvents].reverse();
+  const latestPlan = recentEvents.find((event) => event.method === "turn/plan/updated");
+  const latestCommand = recentEvents.find(
+    (event) =>
+      event.method === "item/started" &&
+      typeof (event.raw as { item?: { type?: string } })?.item?.type === "string" &&
+      (event.raw as { item?: { type?: string } }).item?.type === "commandExecution",
+  );
+  const latestAssistant = [...codexMessages]
+    .reverse()
+    .find((message) => message.role === "assistant" && message.text.trim());
+
+  if (latestPlan?.summary) {
+    return `Codex is working. ${latestPlan.summary}`.slice(0, 320);
+  }
+
+  if (latestCommand?.summary) {
+    return `Codex is working. ${latestCommand.summary}`.slice(0, 320);
+  }
+
+  if (latestAssistant?.text) {
+    const firstLine = latestAssistant.text.trim().split("\n").find(Boolean) ?? latestAssistant.text.trim();
+    return `Codex is working. ${firstLine}`.slice(0, 320);
+  }
+
+  return "Codex is working right now.";
+}
 
 function formatDuration(totalSeconds: number) {
   const hours = Math.floor(totalSeconds / 3600);
@@ -581,6 +627,15 @@ export default function App() {
       }
 
       if (routed.action === "chat_only") {
+        if (routed.chat_mode === "relay_codex_status") {
+          const codexStatus = summarizeCurrentCodexActivity(activeTurnStatus, agentEvents, codexMessages);
+          sendRealtimeText(
+            `Summarize current Codex activity for the user in one short sentence. Do not repeat the user's wording. Do not invent details.\n\nCurrent Codex status:\n${codexStatus}`,
+            { requestResponse: true, visible: false },
+          );
+          return;
+        }
+
         if (routed.chat_mode === "relay_latest_codex") {
           const latestCodexReply = [...codexMessages]
             .reverse()
@@ -632,6 +687,7 @@ export default function App() {
   }, [
     activeTurnId,
     activeTurnStatus,
+    agentEvents,
     codexMessages,
     interruptTurn,
     realtimeMessages,
