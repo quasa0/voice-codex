@@ -730,7 +730,7 @@ export default function App() {
 
       if (routed.action === "codex_interrupt" && activeTurnStatus === "running") {
         queuedInterruptReplacementRef.current = latestFinalUserMessage.text;
-        pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, turnId: activeTurnId };
+        pendingCodexNarrationRef.current = null;
         await interruptTurn(activeThread.id);
         addSystemMessage("interrupt", "interrupt");
         addRealtimeSystemMessage("interrupt", "interrupt");
@@ -791,6 +791,7 @@ export default function App() {
 
   useEffect(() => {
     if (activeTurnStatus !== "idle") return;
+    if (queuedInterruptReplacementRef.current) return;
     if (!pendingCodexNarrationRef.current) return;
 
     const latestCodexReply = [...codexMessages]
