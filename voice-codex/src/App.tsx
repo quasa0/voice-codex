@@ -632,7 +632,7 @@ function shouldForceChatOnly(text: string) {
   const normalized = text.trim().toLowerCase();
   if (!normalized) return false;
   return (
-    /^(?:btw|by the way)\b/.test(normalized) ||
+    /^(?:btw|by the way|after it's done|after it is done)\b/.test(normalized) ||
     shouldAvoidCodex(text) ||
     /\bjust\s+(?:tell|answer|say|chat)\b/.test(normalized) ||
     /\byourself\b/.test(normalized) ||
@@ -644,9 +644,7 @@ function isClearDeskCommand(text: string) {
   const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
   if (!normalized) return false;
   return (
-    normalized === "clear" ||
-    normalized === "clear." ||
-    normalized === "clear!" ||
+    normalized.startsWith("clear") ||
     normalized === "clear desk" ||
     normalized === "clear the desk" ||
     normalized === "close all tabs" ||
