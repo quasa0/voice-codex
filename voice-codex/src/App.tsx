@@ -666,15 +666,17 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
                         message.role === "user" ? "justify-end" : "justify-start"
                       }`}
                     >
-                      <span className="rounded-full border border-white/8 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-400">
-                        {message.source}
-                      </span>
                       {messagePhaseLabel(message) ? (
                         <span className={message.status === "streaming" ? "text-[#b9f075]" : "text-zinc-500"}>
                           {messagePhaseLabel(message)}
                         </span>
                       ) : null}
-                      <span className="ml-auto font-mono text-[10.5px] tracking-[0.04em] text-zinc-500">
+                      {message.role === "user" ? (
+                        <span className="rounded-full border border-white/8 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-400">
+                          {message.source}
+                        </span>
+                      ) : null}
+                      <span className="font-mono text-[10.5px] tracking-[0.04em] text-zinc-500">
                         {formatLocalTime(message.timestamp)}
                       </span>
                     </div>
