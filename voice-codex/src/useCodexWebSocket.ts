@@ -129,6 +129,31 @@ function messageRequestsUserInput(text: string) {
   ].some((phrase) => lowered.includes(phrase));
 }
 
+function inferRunningAssistantKind(text: string): Exclude<CodexSegmentActivityKind, "reply" | "error"> | null {
+  const lowered = text.trim().toLowerCase();
+  if (!lowered || isCodexProgressMessage(lowered)) return null;
+
+  if (
+    /\b(patch|patching|edit|editing|update|updating|replace|replacing|change|changing|modify|modifying|write|writing|wire|wiring|implement|implementing|apply|applying)\b/.test(lowered)
+  ) {
+    return "edit";
+  }
+
+  if (
+    /\b(read|reading|inspect|inspecting|check|checking|scan|scanning|look(?:ing)?(?:\s+at|\s+into)?|trace|tracing|pull(?:ing)?|review|reviewing)\b/.test(lowered)
+  ) {
+    return "read";
+  }
+
+  if (
+    /\b(plan|planning|next step|next steps|going to|i'll|i will|after that|then i'll|then i will)\b/.test(lowered)
+  ) {
+    return "plan";
+  }
+
+  return null;
+}
+
 function parseCommandContext(command: string) {
   const trimmed = command.trim();
   const cdPrefix = trimmed.match(/^cd\s+(['"]?)([^'"]+)\1\s*&&\s*(.+)$/);
@@ -553,8 +578,12 @@ export function useCodexWebSocket(options: UseCodexWebSocketOptions = {}) {
       const sameTurnStillRunning =
         activeTurnStatusRef.current === "running" &&
         (!segment.turnId || segment.turnId === activeTurnIdRef.current);
+      const inferredProgressKind =
+        status === "final" && sameTurnStillRunning && isFinalSubstantiveAnswer
+          ? inferRunningAssistantKind(text)
+          : null;
       const blockingQuestion = requestsInput ? text.trim() : isFinalSubstantiveAnswer ? null : segment.blockingQuestion;
-      const finalOutcome = isFinalSubstantiveAnswer ? text.trim() : segment.finalOutcome;
+      const finalOutcome = isFinalSubstantiveAnswer && !sameTurnStillRunning ? text.trim() : segment.finalOutcome;
 
       return {
         ...segment,
@@ -573,7 +602,7 @@ export function useCodexWebSocket(options: UseCodexWebSocketOptions = {}) {
         finalOutcome,
         activities:
           status === "final" && firstLine
-            ? appendSegmentActivity(segment.activities, "reply", firstLine)
+            ? appendSegmentActivity(segment.activities, inferredProgressKind ?? "reply", firstLine)
             : segment.activities,
       };
     });

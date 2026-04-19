@@ -440,10 +440,42 @@ function buildSegmentReadEditSummary(segment: CodexSegment | null) {
   return parts.join(" ") || null;
 }
 
+function inferAssistantProgressKind(text: string, fallbackKind?: CodexMessageKind | null) {
+  if (fallbackKind && fallbackKind !== "reply") return fallbackKind;
+
+  const lowered = text.trim().toLowerCase();
+  if (!lowered) return null;
+
+  if (
+    /\b(patch|patching|edit|editing|update|updating|replace|replacing|change|changing|modify|modifying|write|writing|wire|wiring|implement|implementing|apply|applying)\b/.test(lowered)
+  ) {
+    return "edit";
+  }
+
+  if (
+    /\b(read|reading|inspect|inspecting|check|checking|scan|scanning|look(?:ing)?(?:\s+at|\s+into)?|trace|tracing|pull(?:ing)?|review|reviewing)\b/.test(lowered)
+  ) {
+    return "read";
+  }
+
+  if (
+    /\b(plan|planning|next step|next steps|going to|i'll|i will|after that|then i'll|then i will)\b/.test(lowered)
+  ) {
+    return "plan";
+  }
+
+  return null;
+}
+
 function getLatestSegmentAssistantProgress(segmentMessages: CodexMessage[]) {
   return [...segmentMessages]
     .reverse()
-    .find((message) => message.role === "assistant" && message.kind && message.kind !== "reply" && message.status === "final");
+    .map((message) =>
+      message.role === "assistant" && message.status === "final"
+        ? { ...message, inferredKind: inferAssistantProgressKind(message.text, message.kind) }
+        : null,
+    )
+    .find((message) => message?.inferredKind);
 }
 
 function getLatestCodexCommand(segment: CodexSegment | null) {
@@ -482,20 +514,35 @@ function summarizeRunningSegmentForSpeech(
     return capSpeechReply("Waiting for input.");
   }
 
-  const latestEditActivity = [...segment.activities].reverse().find((activity) => activity.kind === "edit");
-  if (latestEditActivity || latestProgressMessage?.kind === "edit") {
-    const latestEditedFile = formatActivityFileLabel(latestEditActivity?.summary ?? "", segment.filesEdited.at(-1));
+  if (latestProgressMessage?.inferredKind === "edit") {
+    const latestEditedFile = formatActivityFileLabel(latestProgressMessage.text ?? "", segment.filesEdited.at(-1));
     return capSpeechReply(latestEditedFile ? `Editing ${latestEditedFile}.` : "Editing files.");
   }
 
-  const latestReadActivity = [...segment.activities].reverse().find((activity) => activity.kind === "read");
-  if (latestReadActivity || latestProgressMessage?.kind === "read" || workingLabel === "reading files...") {
-    const latestReadFile = formatActivityFileLabel(latestReadActivity?.summary ?? "", segment.filesRead.at(-1));
+  if (latestProgressMessage?.inferredKind === "plan") {
+    return capSpeechReply("Planning next steps.");
+  }
+
+  if (latestProgressMessage?.inferredKind === "read") {
+    const latestReadFile = formatActivityFileLabel(latestProgressMessage.text ?? "", segment.filesRead.at(-1));
     return capSpeechReply(latestReadFile ? `Reading ${latestReadFile}.` : "Reading files.");
   }
 
-  const latestCommandActivity = [...segment.activities].reverse().find((activity) => activity.kind === "command");
-  if (latestCommandActivity || workingLabel === "running checks..." || workingLabel === "running command...") {
+  const latestRelevantActivity = [...segment.activities]
+    .reverse()
+    .find((activity) => activity.kind === "edit" || activity.kind === "read" || activity.kind === "command" || activity.kind === "plan");
+
+  if (latestRelevantActivity?.kind === "edit") {
+    const latestEditedFile = formatActivityFileLabel(latestRelevantActivity.summary ?? "", segment.filesEdited.at(-1));
+    return capSpeechReply(latestEditedFile ? `Editing ${latestEditedFile}.` : "Editing files.");
+  }
+
+  if (latestRelevantActivity?.kind === "read" || workingLabel === "reading files...") {
+    const latestReadFile = formatActivityFileLabel(latestRelevantActivity?.summary ?? "", segment.filesRead.at(-1));
+    return capSpeechReply(latestReadFile ? `Reading ${latestReadFile}.` : "Reading files.");
+  }
+
+  if (latestRelevantActivity?.kind === "command" || workingLabel === "running checks..." || workingLabel === "running command...") {
     if (latestCommandLooksLikeBuild(latestCommand)) {
       return capSpeechReply("Running a build.");
     }
@@ -505,8 +552,7 @@ function summarizeRunningSegmentForSpeech(
     return capSpeechReply("Running a command.");
   }
 
-  const latestPlanActivity = [...segment.activities].reverse().find((activity) => activity.kind === "plan");
-  if (latestPlanActivity || latestProgressMessage?.kind === "plan") {
+  if (latestRelevantActivity?.kind === "plan") {
     return capSpeechReply("Planning next steps.");
   }
 
@@ -777,7 +823,7 @@ function statusDotClass(status: string) {
 }
 
 function panelBadgeClass() {
-  return "h-6 rounded-full border border-[#e1e4e8] bg-white px-2.5 text-[11.5px] font-medium text-[#1f2328]";
+  return "h-7 rounded-full border border-[#d9dde2] bg-[#f2f3f5] px-2.5 text-[11.5px] font-medium text-[#4f5661]";
 }
 
 function eventToneClass(method?: string) {
@@ -815,7 +861,7 @@ function handoffEventClasses(kind?: "start" | "steer" | "interrupt" | "interrupt
   };
 }
 
-const REALTIME_WAVE_BARS = [0.22, 0.4, 0.62, 0.88, 0.68, 1, 0.74, 0.92, 0.56, 0.34, 0.18];
+const REALTIME_WAVE_BARS = [0.34, 0.7, 1, 0.76, 0.42];
 
 function RealtimeWaveBars({
   isMuted,
@@ -826,14 +872,14 @@ function RealtimeWaveBars({
   isActive: boolean;
   compact?: boolean;
 }) {
-  const barWidth = compact ? 3 : 4;
-  const baseHeight = compact ? 18 : 64;
+  const barWidth = compact ? 2.5 : 4;
+  const baseHeight = compact ? 12 : 64;
 
   return (
-    <div className={`flex items-center justify-center gap-[3px] ${compact ? "h-7" : "h-24"} w-full`}>
+    <div className={`flex items-center justify-center gap-[2px] ${compact ? "h-4" : "h-24"} w-full`}>
       {REALTIME_WAVE_BARS.map((height, index) => {
         const active = isActive && !isMuted;
-        const renderedHeight = active ? Math.max(8, Math.round(baseHeight * height)) : compact ? 7 : 12;
+        const renderedHeight = active ? Math.max(5, Math.round(baseHeight * height)) : compact ? 5 : 12;
         return (
           <span
             key={`${index}-${height}`}
@@ -860,16 +906,23 @@ function RealtimeStatusBadge({
   realtimeStatus: OpenAIRealtimeStatus;
 }) {
   const active = realtimeStatus === "active";
+  const label =
+    realtimeStatus === "active"
+      ? `voice ${isMuted ? "muted" : "live"}`
+      : realtimeStatus === "connecting"
+        ? "voice connecting"
+        : realtimeStatus === "requesting-mic"
+          ? "voice requesting mic"
+          : realtimeStatus === "error"
+            ? "voice error"
+            : "voice idle";
 
   return (
-    <div className="flex h-7 w-[150px] items-center gap-2 rounded-full border border-[#e1e4e8] bg-white px-2.5 shadow-[0_1px_0_rgba(18,22,28,0.02)]">
-      <div className="w-[52px]">
+    <div className="flex h-9 items-center gap-2 rounded-full border border-[#d9dde2] bg-white px-3 shadow-[0_1px_0_rgba(18,22,28,0.02)]">
+      <div className="w-[28px]">
         <RealtimeWaveBars isMuted={isMuted} isActive={active} compact />
       </div>
-      <div className="space-y-0.5">
-        <div className="text-[10px] uppercase leading-none tracking-[0.14em] text-[#8a9099]">voice</div>
-        <div className="text-[12px] font-semibold leading-none text-[#1f2328]">{isMuted ? "muted" : "live"}</div>
-      </div>
+      <div className="text-[11.5px] font-medium leading-none text-[#4f5661]">{label}</div>
     </div>
   );
 }
@@ -881,7 +934,7 @@ function CodexStatusGlyph({ codexState }: { codexState: CodexSegmentState }) {
   const bars = [0.34, 0.7, 1, 0.76, 0.42];
 
   return (
-    <div className="flex w-[52px] items-center justify-center gap-[3px]">
+    <div className="flex w-[28px] items-center justify-center gap-[2px]">
       {bars.map((height, index) => {
         const barClass = failed
           ? "bg-[#c83f3f]"
@@ -891,13 +944,13 @@ function CodexStatusGlyph({ codexState }: { codexState: CodexSegmentState }) {
               ? "bg-[#2fa860]"
               : "bg-[#c4c9cf]";
 
-        const renderedHeight = active ? Math.max(8, Math.round(18 * height)) : waiting ? Math.max(8, Math.round(14 * height)) : 8;
+        const renderedHeight = active ? Math.max(5, Math.round(12 * height)) : waiting ? Math.max(5, Math.round(10 * height)) : 5;
         return (
           <span
             key={`${index}-${height}`}
             className={`rounded-full ${barClass}`}
             style={{
-              width: "3px",
+              width: "2.5px",
               height: `${renderedHeight}px`,
               animation:
                 active
@@ -918,20 +971,19 @@ function CodexStatusGlyph({ codexState }: { codexState: CodexSegmentState }) {
 function CodexStatusBadge({ codexState }: { codexState: CodexSegmentState }) {
   const label =
     codexState === "waiting_for_user"
-      ? "waiting"
+      ? "codex waiting"
       : codexState === "completed"
-        ? "complete"
+        ? "codex complete"
         : codexState === "failed"
-          ? "failed"
-          : codexState;
+          ? "codex failed"
+          : codexState === "running"
+            ? "codex working"
+            : "codex idle";
 
   return (
-    <div className="flex h-7 w-[150px] items-center gap-2 rounded-full border border-[#e1e4e8] bg-white px-2.5 shadow-[0_1px_0_rgba(18,22,28,0.02)]">
+    <div className="flex h-9 items-center gap-2 rounded-full border border-[#d9dde2] bg-white px-3 shadow-[0_1px_0_rgba(18,22,28,0.02)]">
       <CodexStatusGlyph codexState={codexState} />
-      <div className="space-y-0.5">
-        <div className="text-[10px] uppercase leading-none tracking-[0.14em] text-[#8a9099]">codex</div>
-        <div className="text-[12px] font-semibold leading-none text-[#1f2328]">{label}</div>
-      </div>
+      <div className="text-[11.5px] font-medium leading-none text-[#4f5661]">{label}</div>
     </div>
   );
 }
@@ -946,7 +998,15 @@ function OpenAIWordmarkIcon() {
 
 function CodexWordmarkIcon() {
   return (
-    <svg fill="currentColor" fillRule="evenodd" viewBox="0 0 24 24" aria-hidden="true" className="size-4">
+    <svg
+      fill="currentColor"
+      fillRule="evenodd"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="size-4"
+      style={{ flex: "none", lineHeight: 1 }}
+    >
+      <title>Codex</title>
       <path clipRule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z" />
     </svg>
   );
@@ -968,17 +1028,17 @@ function PanelShell({
   contentClassName?: string;
 }) {
   return (
-    <Card className="h-full rounded-md border border-[#e1e4e8] bg-white shadow-[0_1px_2px_rgba(18,22,28,0.04)]">
-      <CardHeader className="space-y-1 pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
+    <Card className="h-full !gap-0 !py-0 rounded-none border-0 border-r border-[#e1e4e8] bg-white shadow-none last:border-r-0">
+      <CardHeader className="!gap-0 border-b border-[#e1e4e8] !px-2.5 !py-1">
+        <div className="flex items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2.5">
             {icon ? (
-              <div className="flex size-7 items-center justify-center rounded-md border border-[#e1e4e8] bg-[#f2f3f5] text-[#1f2328]">
+              <div className="flex size-6.5 items-center justify-center rounded-md border border-[#e1e4e8] bg-[#f2f3f5] text-[#1f2328]">
                 {icon}
               </div>
             ) : null}
             <div>
-              <CardTitle className="text-[14px] font-semibold tracking-tight text-[#1f2328]">{title}</CardTitle>
+              <CardTitle className="text-[13.5px] font-semibold tracking-tight text-[#1f2328]">{title}</CardTitle>
               {description ? (
                 <CardDescription className="text-[12px] leading-5 text-[#565c66]">{description}</CardDescription>
               ) : null}
@@ -991,7 +1051,7 @@ function PanelShell({
           ) : null}
         </div>
       </CardHeader>
-      <CardContent className={contentClassName}>{children}</CardContent>
+      <CardContent className={`!px-2.5 !py-1 ${contentClassName ?? ""}`.trim()}>{children}</CardContent>
     </Card>
   );
 }
@@ -1135,7 +1195,7 @@ function CodexConversationPanel({
   }, [messages, activeSegment?.id, activeSegment?.updatedAt]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-md border border-[#e1e4e8] bg-[#f7f8fa] px-3 py-3">
+    <div className="flex h-full min-h-0 flex-col rounded-md border border-[#e1e4e8] bg-[#f2f3f5] px-2 py-2">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
         <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-4"}>
           {messages.length === 0 ? (
@@ -1190,7 +1250,7 @@ function CodexConversationPanel({
                     >
                       {message.text || "..."}
                       {message.role === "assistant" && message.status === "streaming" ? (
-                        <span className="ml-1 inline-block h-[14px] w-[6px] animate-pulse align-[-2px] rounded-sm bg-[#2f7bd9]" />
+                        <span className="ml-1 inline-block h-[14px] w-[6px] animate-pulse align-[-2px] rounded-sm bg-[#2fa860]" />
                       ) : null}
                     </div>
                   </>
@@ -1236,7 +1296,7 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
   }, [messages]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-md border border-[#e1e4e8] bg-[#f7f8fa] px-3 py-3">
+    <div className="flex h-full min-h-0 flex-col rounded-md border border-[#e1e4e8] bg-[#f2f3f5] px-2 py-2">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
         <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-4"}>
           {messages.length === 0 ? (
@@ -1289,7 +1349,7 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
                     >
                       {message.text || "..."}
                       {message.role === "assistant" && message.status === "streaming" ? (
-                        <span className="ml-1 inline-block h-[14px] w-[6px] animate-pulse align-[-2px] rounded-sm bg-[#2f7bd9]" />
+                        <span className="ml-1 inline-block h-[14px] w-[6px] animate-pulse align-[-2px] rounded-sm bg-[#2fa860]" />
                       ) : null}
                     </div>
                   </>
@@ -2135,8 +2195,8 @@ export default function App() {
     <div className={`bg-[#f7f8fa] text-[#1f2328] ${paneOnlyMode ? "h-screen overflow-hidden" : "min-h-screen"}`}>
       <style>{`
         @keyframes streaming-label-pulse {
-          0%, 100% { color: rgba(47, 123, 217, 0.72); text-shadow: 0 0 0 rgba(47, 123, 217, 0); }
-          50% { color: rgba(47, 123, 217, 1); text-shadow: 0 0 10px rgba(47, 123, 217, 0.18); }
+          0%, 100% { color: rgba(47, 168, 96, 0.72); text-shadow: 0 0 0 rgba(47, 168, 96, 0); }
+          50% { color: rgba(47, 168, 96, 1); text-shadow: 0 0 10px rgba(47, 168, 96, 0.18); }
         }
         @keyframes streaming-dot-fade {
           0%, 20% { opacity: 0.18; }
@@ -2193,7 +2253,7 @@ export default function App() {
           animation-delay: 0.36s;
         }
       `}</style>
-      <div className={`flex flex-col gap-4 ${paneOnlyMode ? "h-full w-full px-3 py-3 sm:px-4 lg:px-5" : "mx-auto max-w-[1180px] px-3 py-4 sm:px-5 lg:px-6"}`}>
+      <div className={`flex flex-col gap-4 ${paneOnlyMode ? "h-full w-full px-0 py-0" : "mx-auto max-w-[1320px] px-3 py-4 sm:px-5 lg:px-6"}`}>
         {!paneOnlyMode ? (
           <Card className="overflow-hidden border border-[#e1e4e8] bg-white shadow-[0_1px_2px_rgba(18,22,28,0.04)]">
             <CardContent className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
@@ -2216,14 +2276,14 @@ export default function App() {
         ) : null}
 
         <div className={paneOnlyMode ? "flex min-h-0 flex-1 flex-col" : "space-y-4"}>
-          <div className={`grid items-stretch gap-4 md:grid-cols-2 ${paneOnlyMode ? "min-h-0 flex-1 auto-rows-fr" : ""}`}>
+          <div className={`grid items-stretch gap-0 border-y border-[#e1e4e8] bg-white md:grid-cols-2 ${paneOnlyMode ? "min-h-0 flex-1 auto-rows-fr" : "rounded-lg border-x shadow-[0_1px_2px_rgba(18,22,28,0.04)]"}`}>
             <PanelShell
               title="Realtime Voice Agent"
               icon={<OpenAIWordmarkIcon />}
               headerRight={
                 <RealtimeStatusBadge isMuted={isMicMuted} realtimeStatus={realtimeStatus} />
               }
-              contentClassName={`flex flex-col space-y-4 ${paneOnlyMode ? "min-h-0 h-full" : "min-h-[36rem]"}`}
+              contentClassName={`flex flex-col gap-2 ${paneOnlyMode ? "min-h-0 h-full" : "min-h-[36rem]"}`}
             >
               {realtimeStatus === "idle" || realtimeStatus === "error" ? (
                 <div className="flex min-h-[11rem] items-center justify-center">
@@ -2238,7 +2298,7 @@ export default function App() {
                 </div>
               ) : (
                 <>
-                  <div className="flex min-h-10 flex-wrap items-center justify-between gap-3">
+                  <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge className={`gap-2 ${panelBadgeClass()}`}>
                         <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
@@ -2251,13 +2311,13 @@ export default function App() {
                       ) : null}
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2.5">
                       <span className="text-[11.5px] font-medium text-[#565c66]">
                         {realtimeConnectedAt ? formatDuration(realtimeElapsedSeconds) : "--:--"}
                       </span>
                       <Button
                         variant="outline"
-                        className="h-[26px] rounded-md border border-[#d3d7dc] bg-white px-3 text-[12px] font-medium text-[#1f2328] hover:bg-[#f2f3f5]"
+                        className="h-8 rounded-md border border-[#d3d7dc] bg-white px-3 text-[12px] font-medium text-[#1f2328] hover:bg-[#f2f3f5]"
                         onClick={() => void handleClearChat()}
                         title="Clear chat"
                       >
@@ -2266,7 +2326,7 @@ export default function App() {
                       </Button>
                       <Button
                         variant="destructive"
-                        className="h-[26px] rounded-md border border-[#e7c6c6] bg-[#fbf1f1] px-3 text-[12px] font-medium text-[#8a2a2a] hover:bg-[#f6e2e2]"
+                        className="h-8 rounded-md border border-[#e7c6c6] bg-[#fbf1f1] px-3 text-[12px] font-medium text-[#8a2a2a] hover:bg-[#f6e2e2]"
                         onClick={() => {
                           const nextIntent = { ...persistedReconnectIntentRef.current, shouldReconnectRealtime: false };
                           persistedReconnectIntentRef.current = nextIntent;
@@ -2281,10 +2341,10 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 rounded-md border border-[#e1e4e8] bg-white p-1.5 shadow-[0_1px_2px_rgba(18,22,28,0.04)]">
+                  <div className="flex items-center gap-1.5 rounded-md bg-white">
                     <button
                       type="button"
-                      className={`flex size-8 shrink-0 items-center justify-center rounded-md border transition ${
+                      className={`flex size-7.5 shrink-0 items-center justify-center rounded-md border transition ${
                         !isMicMuted && realtimeStatus === "active"
                           ? "border-[#c4e5d1] bg-[#e2f5ea] text-[#1e6b3f] shadow-[0_0_0_3px_rgba(47,168,96,0.18)]"
                           : "border-[#d3d7dc] bg-white text-[#565c66] hover:bg-[#f2f3f5]"
@@ -2299,7 +2359,7 @@ export default function App() {
                       ref={realtimeInputRef}
                       value={realtimeText}
                       onChange={(event) => setRealtimeText(event.target.value)}
-                      className="h-8 min-w-0 flex-1 rounded-md border border-[#d3d7dc] bg-white px-3 text-[13px] text-[#1f2328] outline-none transition placeholder:text-[#8a9099] focus:border-[#2f7bd9] focus:ring-2 focus:ring-[#2f7bd9]/20"
+                      className="h-7.5 min-w-0 flex-1 rounded-md border border-[#d3d7dc] bg-white px-3 text-[13px] text-[#1f2328] outline-none transition placeholder:text-[#8a9099] focus:border-[#2fa860] focus:ring-2 focus:ring-[#2fa860]/20"
                       placeholder="Type to the realtime session"
                       onKeyDown={(event) => {
                         if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
@@ -2313,7 +2373,7 @@ export default function App() {
                     />
                     <button
                       type="button"
-                      className="flex size-8 shrink-0 items-center justify-center rounded-md border border-[#d3d7dc] bg-white text-[#565c66] transition hover:bg-[#f2f3f5] disabled:cursor-not-allowed disabled:opacity-40"
+                      className="flex size-7.5 shrink-0 items-center justify-center rounded-md border border-[#d3d7dc] bg-white text-[#565c66] transition hover:bg-[#f2f3f5] disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={() => {
                         try {
                           skipAssistant();
@@ -2328,7 +2388,7 @@ export default function App() {
                     </button>
                     <button
                       type="button"
-                      className="flex size-8 shrink-0 items-center justify-center rounded-md border border-[#d3d7dc] bg-white text-[#565c66] transition hover:bg-[#f2f3f5] disabled:cursor-not-allowed disabled:opacity-40"
+                      className="flex size-7.5 shrink-0 items-center justify-center rounded-md border border-[#d3d7dc] bg-white text-[#565c66] transition hover:bg-[#f2f3f5] disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={handleSendRealtimeText}
                       disabled={realtimeStatus !== "active" || !realtimeText.trim()}
                       title="Send Text"
@@ -2352,9 +2412,9 @@ export default function App() {
               title="Codex"
               icon={<CodexWordmarkIcon />}
               headerRight={<CodexStatusBadge codexState={currentCodexState} />}
-              contentClassName={`flex flex-col space-y-4 ${paneOnlyMode ? "min-h-0 h-full" : "min-h-[36rem]"}`}
+              contentClassName={`flex flex-col gap-2 ${paneOnlyMode ? "min-h-0 h-full" : "min-h-[36rem]"}`}
             >
-              <div className="flex min-h-10 flex-wrap items-center justify-between gap-3">
+              <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge className={`gap-2 ${panelBadgeClass()}`}>
                     <span className={`size-1.5 rounded-full ${statusDotClass(status)}`} />
@@ -2364,7 +2424,7 @@ export default function App() {
 
                 <Button
                   variant="destructive"
-                  className="h-[26px] rounded-md border border-[#e7c6c6] bg-[#fbf1f1] px-3 text-[12px] font-medium text-[#8a2a2a] hover:bg-[#f6e2e2] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="h-8 rounded-md border border-[#e7c6c6] bg-[#fbf1f1] px-3 text-[12px] font-medium text-[#8a2a2a] hover:bg-[#f6e2e2] disabled:cursor-not-allowed disabled:opacity-40"
                   onClick={() => {
                     if (!thread || activeTurnStatus !== "running") return;
                     void interruptTurn(thread.id).catch((error) => {
@@ -2382,12 +2442,12 @@ export default function App() {
               {status === "connected" ? (
                 <>
                   {thread ? (
-                    <div className="flex min-h-0 flex-1 flex-col space-y-4">
-                      <div className="flex items-center gap-2 rounded-md border border-[#e1e4e8] bg-white p-1.5 shadow-[0_1px_2px_rgba(18,22,28,0.04)]">
+                    <div className="flex min-h-0 flex-1 flex-col gap-2">
+                      <div className="flex items-center gap-1.5 rounded-md bg-white">
                         <input
                           value={codexTaskText}
                           onChange={(event) => setCodexTaskText(event.target.value)}
-                          className="h-8 min-w-0 flex-1 rounded-md border border-[#d3d7dc] bg-white px-3 text-[13px] text-[#1f2328] outline-none transition placeholder:text-[#8a9099] focus:border-[#2f7bd9] focus:ring-2 focus:ring-[#2f7bd9]/20"
+                          className="h-7.5 min-w-0 flex-1 rounded-md border border-[#d3d7dc] bg-white px-3 text-[13px] text-[#1f2328] outline-none transition placeholder:text-[#8a9099] focus:border-[#2fa860] focus:ring-2 focus:ring-[#2fa860]/20"
                           placeholder="Type to the Codex thread"
                           onKeyDown={(event) => {
                             if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
@@ -2401,7 +2461,7 @@ export default function App() {
                         />
                         <button
                           type="button"
-                          className="flex size-8 shrink-0 items-center justify-center rounded-md border border-[#d3d7dc] bg-white text-[#565c66] transition hover:bg-[#f2f3f5] disabled:cursor-not-allowed disabled:opacity-40"
+                          className="flex size-7.5 shrink-0 items-center justify-center rounded-md border border-[#d3d7dc] bg-white text-[#565c66] transition hover:bg-[#f2f3f5] disabled:cursor-not-allowed disabled:opacity-40"
                           onClick={() => {
                             void handleSendCodexTask();
                           }}

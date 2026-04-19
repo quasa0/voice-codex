@@ -35,7 +35,7 @@
 
   --border: oklch(0.915 0.003 255);
   --input: oklch(0.915 0.003 255);
-  --ring: oklch(0.60 0.14 235);
+  --ring: oklch(0.62 0.13 150);
 
   --radius: 0.375rem;
   --font-sans: "Inter", -apple-system, "Segoe UI", sans-serif;
@@ -50,8 +50,8 @@
   --ide-faint: oklch(0.76 0.005 255);
   --ide-run: oklch(0.62 0.13 150);
   --ide-run-soft: oklch(0.955 0.035 150);
-  --ide-accent: oklch(0.60 0.14 235);
-  --ide-accent-soft: oklch(0.96 0.025 250);
+  --ide-accent: oklch(0.62 0.13 150);
+  --ide-accent-soft: oklch(0.955 0.035 150);
   --ide-warn: oklch(0.68 0.12 70);
   --ide-err: oklch(0.56 0.16 27);
 }
@@ -75,7 +75,7 @@
   --destructive-foreground: oklch(0.99 0 0);
   --border: oklch(0.915 0.003 255);
   --input: oklch(0.915 0.003 255);
-  --ring: oklch(0.60 0.14 235);
+  --ring: oklch(0.62 0.13 150);
   --tracking-normal: -0.005em;
 }
 
