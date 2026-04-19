@@ -58,6 +58,10 @@ export function useOpenAIRealtime() {
   const localStreamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const pendingTextResponseRef = useRef<string | null>(null);
+  const pendingHiddenResponseSeqRef = useRef<number | null>(null);
+  const hiddenResponseSeqRef = useRef(0);
+  const invalidatedHiddenResponseSeqRef = useRef(0);
+  const assistantHiddenResponseSeqByItemRef = useRef<Map<string, number>>(new Map());
   const isMicMutedRef = useRef(true);
   const assistantSpeakingTimeoutRef = useRef<number | null>(null);
 
@@ -207,6 +211,10 @@ export function useOpenAIRealtime() {
       setLogs([]);
       setMessages([]);
       setStatus("requesting-mic");
+      pendingHiddenResponseSeqRef.current = null;
+      hiddenResponseSeqRef.current = 0;
+      invalidatedHiddenResponseSeqRef.current = 0;
+      assistantHiddenResponseSeqByItemRef.current.clear();
 
       let stream: MediaStream;
       try {
@@ -330,6 +338,14 @@ export function useOpenAIRealtime() {
             const itemId = String(parsed.item_id ?? "");
             const delta = String(parsed.delta ?? "");
             if (itemId && delta) {
+              const existingHiddenSeq = assistantHiddenResponseSeqByItemRef.current.get(itemId);
+              const hiddenSeq = existingHiddenSeq ?? pendingHiddenResponseSeqRef.current;
+              if (hiddenSeq !== null && hiddenSeq <= invalidatedHiddenResponseSeqRef.current) {
+                return;
+              }
+              if (hiddenSeq !== null && existingHiddenSeq === undefined) {
+                assistantHiddenResponseSeqByItemRef.current.set(itemId, hiddenSeq);
+              }
               setMessages((prev) => {
                 const existing = prev.find((message) => message.id === itemId);
                 if (existing) {
@@ -356,6 +372,13 @@ export function useOpenAIRealtime() {
             const itemId = String(parsed.item_id ?? "");
             const transcript = String(parsed.transcript ?? "");
             if (itemId) {
+              const hiddenSeq = assistantHiddenResponseSeqByItemRef.current.get(itemId);
+              if (hiddenSeq !== undefined && hiddenSeq <= invalidatedHiddenResponseSeqRef.current) {
+                setMessages((prev) => prev.filter((message) => message.id !== itemId));
+                assistantHiddenResponseSeqByItemRef.current.delete(itemId);
+                pendingTextResponseRef.current = null;
+                return;
+              }
               setMessages((prev) =>
                 prev.map((message) =>
                   message.id === itemId
@@ -363,7 +386,9 @@ export function useOpenAIRealtime() {
                     : message,
                 ),
               );
+              assistantHiddenResponseSeqByItemRef.current.delete(itemId);
               pendingTextResponseRef.current = null;
+              pendingHiddenResponseSeqRef.current = null;
             }
           }
 
@@ -426,12 +451,21 @@ export function useOpenAIRealtime() {
       }
 
       const { requestResponse: shouldRequestResponse = true, visible = true } = options;
+      const isHiddenRelay = shouldRequestResponse && !visible;
 
       // Hard-interrupt any previous assistant reply before queuing the next user turn.
       try {
         cancelAssistantResponse();
       } catch {
         // If cancel cannot be sent, continue with the new user message.
+      }
+
+      if (visible) {
+        invalidatedHiddenResponseSeqRef.current = hiddenResponseSeqRef.current;
+        pendingHiddenResponseSeqRef.current = null;
+      } else if (isHiddenRelay) {
+        hiddenResponseSeqRef.current += 1;
+        pendingHiddenResponseSeqRef.current = hiddenResponseSeqRef.current;
       }
 
       const userEvent = {
