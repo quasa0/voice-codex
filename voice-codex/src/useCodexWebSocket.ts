@@ -8,6 +8,7 @@ import type {
   ModelInfo,
   AccountInfo,
   CodexMessage,
+  CodexMessageKind,
   CodexSegment,
   CodexRelayState,
   CodexSegmentMode,
@@ -129,6 +130,14 @@ function extractCommandLineRange(command: string): { lineStart?: number; lineEnd
   const lineEnd = Number.parseInt(sedMatch[2] ?? sedMatch[1] ?? "", 10);
   if (!Number.isFinite(lineStart) || !Number.isFinite(lineEnd)) return null;
   return { lineStart, lineEnd };
+}
+
+function classifyCommandKind(command: string): CodexMessageKind {
+  const { innerCommand } = parseCommandContext(command);
+  if (/(?:cat|nl -ba|sed -n '[^']+'|rg\s)/.test(innerCommand)) {
+    return "read";
+  }
+  return "command";
 }
 
 function extractEditedPath(item: Record<string, unknown>) {
@@ -778,6 +787,7 @@ export function useCodexWebSocket() {
             text: `Turn failed: ${errorMessage}`,
             status: "final",
             timestamp: nowTime(),
+            kind: "error",
             turnId,
             segmentId: segmentId ?? null,
           });
@@ -794,6 +804,7 @@ export function useCodexWebSocket() {
           text: summary,
           status: "final",
           timestamp: nowTime(),
+          kind: "plan",
           turnId,
           segmentId: segmentId ?? null,
         });
@@ -811,6 +822,7 @@ export function useCodexWebSocket() {
             text: "",
             status: "streaming",
             timestamp: nowTime(),
+            kind: "reply",
             turnId,
             segmentId: segmentId ?? null,
           });
@@ -827,6 +839,7 @@ export function useCodexWebSocket() {
             text: summarizeCommandLabel(item),
             status: "streaming",
             timestamp: nowTime(),
+            kind: classifyCommandKind(String(item.command ?? "")),
             turnId,
             segmentId: segmentId ?? null,
           });
@@ -851,6 +864,7 @@ export function useCodexWebSocket() {
                       ...message,
                       text: `${message.text}${delta}`,
                       status: "streaming",
+                      kind: message.kind ?? "reply",
                       segmentId: message.segmentId ?? segmentId ?? null,
                     }
                   : message,
@@ -864,6 +878,7 @@ export function useCodexWebSocket() {
                 text: delta,
                 status: "streaming",
                 timestamp: nowTime(),
+                kind: "reply",
                 turnId,
                 segmentId: segmentId ?? null,
               },
@@ -902,6 +917,7 @@ export function useCodexWebSocket() {
                       ...message,
                       text: resolvedText || message.text,
                       status: "final",
+                      kind: message.kind ?? "reply",
                       turnId: message.turnId ?? turnId,
                       segmentId: message.segmentId ?? segmentId ?? null,
                     }
@@ -922,6 +938,7 @@ export function useCodexWebSocket() {
               text: summarizeCommandResult(item),
               status: "final",
               timestamp: nowTime(),
+              kind: classifyCommandKind(String(item.command ?? "")),
               turnId,
               segmentId: segmentId ?? null,
             });
@@ -938,6 +955,7 @@ export function useCodexWebSocket() {
             text: editedPath ? `Updated ${editedPath}` : "Updated files",
             status: "final",
             timestamp: nowTime(),
+            kind: "edit",
             turnId,
             segmentId: segmentId ?? null,
           });

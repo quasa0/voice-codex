@@ -3,7 +3,7 @@ import { Activity, Cable, Mic, MicOff, PhoneOff, Play, Radio, Send, SkipForward,
 import { useCodexWebSocket } from "./useCodexWebSocket";
 import { useOpenAIRealtime } from "./useOpenAIRealtime";
 import type { OpenAIRealtimeStatus } from "./useOpenAIRealtime";
-import type { LogEntry, AgentEvent, ModelInfo, CodexMessage, CodexSegment, CodexSegmentState } from "./types";
+import type { LogEntry, AgentEvent, ModelInfo, CodexMessage, CodexMessageKind, CodexSegment, CodexSegmentState } from "./types";
 import { getCodexProjectCwd } from "./codexConfig";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -439,6 +439,31 @@ function codexMessagePhaseLabel(message: CodexMessage) {
   return message.status === "streaming" ? "streaming" : "";
 }
 
+function codexMessageKindLabel(message: CodexMessage) {
+  if (message.role !== "assistant") return "";
+
+  const labelByKind: Record<CodexMessageKind, string> = {
+    reply: "reply",
+    read: "read",
+    edit: "edit",
+    command: "command",
+    plan: "plan",
+    error: "error",
+  };
+
+  if (!message.kind) return "";
+  return labelByKind[message.kind] ?? "";
+}
+
+function codexMessageKindClass(kind?: CodexMessageKind) {
+  if (kind === "edit") return "border-[#b9f075]/20 bg-[#b9f075]/10 text-[#d8f5ab]";
+  if (kind === "read") return "border-sky-300/20 bg-sky-300/10 text-sky-100";
+  if (kind === "command") return "border-zinc-400/20 bg-zinc-400/10 text-zinc-200";
+  if (kind === "plan") return "border-fuchsia-300/20 bg-fuchsia-300/10 text-fuchsia-100";
+  if (kind === "error") return "border-red-300/20 bg-red-300/10 text-red-100";
+  return "border-zinc-400/20 bg-zinc-400/10 text-zinc-200";
+}
+
 function statusDotClass(status: string) {
   if (status === "connected" || status === "active" || status === "apiKey") return "bg-[#b9f075]";
   if (status === "connecting" || status === "requesting-mic") return "bg-[#d0ef9e]";
@@ -818,6 +843,13 @@ function CodexConversationPanel({
                       }`}
                     >
                       <TimestampLabel timestamp={message.timestamp} />
+                      {codexMessageKindLabel(message) ? (
+                        <span
+                          className={`rounded-full border px-1.5 py-[2px] text-[9px] font-medium uppercase tracking-[0.14em] leading-none ${codexMessageKindClass(message.kind)}`}
+                        >
+                          {codexMessageKindLabel(message)}
+                        </span>
+                      ) : null}
                       {codexMessagePhaseLabel(message) ? (
                         message.status === "streaming" ? (
                           <StreamingPhaseLabel label={codexMessagePhaseLabel(message) ?? "streaming"} />

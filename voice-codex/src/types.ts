@@ -60,6 +60,7 @@ export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "er
 export type CodexSegmentMode = "start" | "steer" | "interrupt";
 export type CodexSegmentState = "idle" | "running" | "waiting_for_user" | "completed" | "failed";
 export type CodexRelayState = "not_spoken" | "progress_spoken" | "clarification_spoken" | "completion_spoken";
+export type CodexMessageKind = "reply" | "read" | "edit" | "command" | "plan" | "error";
 
 export interface CodexMessage {
   id: string;
@@ -68,6 +69,7 @@ export interface CodexMessage {
   status: "streaming" | "final";
   timestamp: string;
   eventKind?: "start" | "steer" | "interrupt";
+  kind?: CodexMessageKind;
   turnId?: string | null;
   segmentId?: string | null;
 }
