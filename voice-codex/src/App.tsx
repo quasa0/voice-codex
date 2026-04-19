@@ -1399,7 +1399,7 @@ export default function App() {
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge className={`gap-2 ${panelBadgeClass()}`}>
                         <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
-                        {realtimeStatus}
+                        {realtimeStatus.charAt(0).toUpperCase() + realtimeStatus.slice(1)}
                       </Badge>
                       {realtimeLastError ? (
                         <Badge variant="outline" className="max-w-full border-red-500/20 bg-red-950/20 text-red-200">
@@ -1504,11 +1504,6 @@ export default function App() {
                     <span className={`size-1.5 rounded-full ${statusDotClass(status)}`} />
                     Codex {status}
                   </Badge>
-                  {account?.type ? (
-                    <Badge variant="outline" className={panelBadgeClass()}>
-                      API
-                    </Badge>
-                  ) : null}
                 </div>
 
                 <div
