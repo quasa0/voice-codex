@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Activity, Cable, Mic, MicOff, Play, Radio, Send, SkipForward, Square, TerminalSquare, WandSparkles } from "lucide-react";
 import { useCodexWebSocket } from "./useCodexWebSocket";
 import { useOpenAIRealtime } from "./useOpenAIRealtime";
+import type { OpenAIRealtimeStatus } from "./useOpenAIRealtime";
 import type { LogEntry, AgentEvent, ModelInfo, CodexMessage } from "./types";
 import { CODEX_PROJECT_CWD } from "./codexConfig";
 import { Badge } from "@/components/ui/badge";
@@ -270,6 +271,65 @@ function handoffEventClasses(kind?: "start" | "steer" | "interrupt") {
   };
 }
 
+const REALTIME_WAVE_BARS = [0.22, 0.4, 0.62, 0.88, 0.68, 1, 0.74, 0.92, 0.56, 0.34, 0.18];
+
+function RealtimeWaveBars({
+  isMuted,
+  isActive,
+  compact = false,
+}: {
+  isMuted: boolean;
+  isActive: boolean;
+  compact?: boolean;
+}) {
+  const barWidth = compact ? 3 : 4;
+  const baseHeight = compact ? 18 : 64;
+
+  return (
+    <div className={`flex items-center justify-center gap-[3px] ${compact ? "h-7" : "h-24"} w-full`}>
+      {REALTIME_WAVE_BARS.map((height, index) => {
+        const active = isActive && !isMuted;
+        const renderedHeight = active ? Math.max(8, Math.round(baseHeight * height)) : compact ? 7 : 12;
+        return (
+          <span
+            key={`${index}-${height}`}
+            className={`rounded-full ${active ? "bg-[#b9f075]" : "bg-zinc-500/65"}`}
+            style={{
+              width: `${barWidth}px`,
+              height: `${renderedHeight}px`,
+              animation: active ? `realtime-wave 1.15s ease-in-out ${index * 0.08}s infinite` : "none",
+              boxShadow: active ? "0 0 10px rgba(185,240,117,0.22)" : "none",
+              transformOrigin: "center",
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function RealtimeStatusBadge({
+  isMuted,
+  realtimeStatus,
+}: {
+  isMuted: boolean;
+  realtimeStatus: OpenAIRealtimeStatus;
+}) {
+  const active = realtimeStatus === "active";
+
+  return (
+    <div className="flex items-center gap-3 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+      <div className="w-[52px]">
+        <RealtimeWaveBars isMuted={isMuted} isActive={active} compact />
+      </div>
+      <div className="space-y-0.5">
+        <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">voice</div>
+        <div className="text-[14px] font-semibold leading-none text-zinc-100">{isMuted ? "muted" : "live"}</div>
+      </div>
+    </div>
+  );
+}
+
 function PanelShell({
   title,
   description,
@@ -489,27 +549,21 @@ function CodexConversationPanel({ messages }: { messages: CodexMessage[] }) {
   );
 }
 
-function ConversationPanel({ messages }: { messages: RealtimeMessage[] }) {
+function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }) {
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-xl border border-white/8 bg-[#171d1b] p-3">
+    <div className="flex h-full min-h-0 flex-col rounded-[1.55rem] border border-white/8 bg-[#171d1b] px-4 py-4">
       <ScrollArea className="min-h-0 flex-1 pr-3">
-        <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-1.5"}>
+        <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-4"}>
           {messages.length === 0 ? (
-            <div className="flex w-full max-w-md items-center justify-center rounded-2xl border border-dashed border-white/8 bg-white/[0.02] px-6 py-8 text-center text-sm text-zinc-500">
-              No conversation messages yet.
+            <div className="flex min-h-full items-center justify-center text-center">
+              <div className="max-w-md space-y-2 px-6">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-zinc-600">conversation</div>
+                <div className="text-[15px] text-zinc-500">No conversation messages yet.</div>
+              </div>
             </div>
           ) : (
             messages.map((message) => (
-              <div
-                key={message.id}
-                className={`py-2 ${
-                  message.role === "assistant"
-                    ? "text-left"
-                    : message.role === "system"
-                      ? "text-left"
-                      : "text-right"
-                }`}
-              >
+              <div key={message.id} className="space-y-1.5 py-0.5">
                 {message.role === "system" ? (
                   <div className="relative flex min-h-6 items-center justify-center">
                     <span
@@ -519,25 +573,39 @@ function ConversationPanel({ messages }: { messages: RealtimeMessage[] }) {
                     >
                       {message.text}
                     </span>
-                    <span className="absolute right-0 text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                    <span className="absolute right-0 text-[10px] tracking-[0.16em] text-zinc-500">
                       {formatLocalTime(message.timestamp)}
                     </span>
                   </div>
                 ) : (
-                  <div className={`space-y-1 ${message.role === "assistant" ? "mr-12" : "ml-12"}`}>
+                  <>
+                    <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+                      <span className="text-[12.5px] font-semibold tracking-[-0.01em] text-zinc-300">
+                        {message.role === "assistant" ? "Codex" : "You"}
+                      </span>
+                      <span className="rounded-full border border-white/8 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-400">
+                        {message.source}
+                      </span>
+                      {messagePhaseLabel(message) ? (
+                        <span className={message.status === "streaming" ? "text-[#b9f075]" : "text-zinc-500"}>
+                          {messagePhaseLabel(message)}
+                        </span>
+                      ) : null}
+                      <span className="ml-auto font-mono text-[10.5px] tracking-[0.04em] text-zinc-500">
+                        {formatLocalTime(message.timestamp)}
+                      </span>
+                    </div>
                     <div
-                      className={`flex flex-wrap gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] text-zinc-500 ${
-                        message.role === "assistant" ? "justify-start" : "justify-end"
+                      className={`whitespace-pre-wrap text-[15px] leading-[1.65] ${
+                        message.role === "assistant" ? "text-zinc-100" : "text-zinc-300"
                       }`}
                     >
-                      <span>{message.source}</span>
-                      {messagePhaseLabel(message) ? <span>{messagePhaseLabel(message)}</span> : null}
-                      <span>{formatLocalTime(message.timestamp)}</span>
-                    </div>
-                    <div className="whitespace-pre-wrap text-[13px] leading-5 text-zinc-100">
                       {message.text || "..."}
+                      {message.role === "assistant" && message.status === "streaming" ? (
+                        <span className="ml-1 inline-block h-[14px] w-[6px] animate-pulse align-[-2px] rounded-sm bg-[#b9f075]" />
+                      ) : null}
                     </div>
-                  </div>
+                  </>
                 )}
               </div>
             ))
@@ -931,6 +999,12 @@ export default function App() {
 
   return (
     <div className="dark min-h-screen bg-transparent text-zinc-50">
+      <style>{`
+        @keyframes realtime-wave {
+          0%, 100% { transform: scaleY(0.48); opacity: 0.86; }
+          50% { transform: scaleY(1.02); opacity: 1; }
+        }
+      `}</style>
       <div className="mx-auto flex max-w-[1180px] flex-col gap-4 px-3 py-4 sm:px-5 lg:px-6">
         <Card className="overflow-hidden border-white/8 bg-[#1b221f]/96 shadow-xl shadow-black/20">
           <CardContent className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
@@ -958,10 +1032,7 @@ export default function App() {
               description="Direct voice lane over the OpenAI Realtime API."
               icon={<WandSparkles className="size-4" />}
               headerRight={
-                <Badge className={`gap-2 ${turnBadgeClass(isMicMuted ? "idle" : "running")}`}>
-                  <span className={`size-2 rounded-full ${statusDotClass(isMicMuted ? "idle" : "active")}`} />
-                  {isMicMuted ? "muted" : "live"}
-                </Badge>
+                <RealtimeStatusBadge isMuted={isMicMuted} realtimeStatus={realtimeStatus} />
               }
               contentClassName="flex min-h-[36rem] flex-col space-y-4"
             >
@@ -1005,21 +1076,25 @@ export default function App() {
                     </Button>
                   </div>
 
-                  <div className="flex items-center gap-2.5 rounded-[1.45rem] border border-white/8 bg-[#202824]/70 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-                    <Button
-                      size="icon-lg"
-                      className="size-12 shrink-0 rounded-[1rem] border border-[#d6ff96]/35 bg-[#b9f075] text-[#213024] shadow-[0_8px_20px_rgba(185,240,117,0.16)] hover:bg-[#c9f589]"
+                  <div className="flex items-center gap-2 rounded-[1.1rem] border border-white/10 bg-[#1d2421] p-2 shadow-[0_14px_40px_rgba(0,0,0,0.26)]">
+                    <button
+                      type="button"
+                      className={`flex size-10 shrink-0 items-center justify-center rounded-[0.9rem] border text-zinc-100 transition ${
+                        !isMicMuted && realtimeStatus === "active"
+                          ? "border-transparent bg-[#b9f075] text-[#213024] shadow-[0_0_0_4px_rgba(185,240,117,0.18)]"
+                          : "border-white/10 bg-[#222925] text-zinc-100 hover:bg-[#272f2a]"
+                      }`}
                       onClick={toggleMicMuted}
                       disabled={realtimeStatus !== "active"}
                       title={isMicMuted ? "Unmute Mic" : "Mute Mic"}
                     >
                       {isMicMuted ? <Mic className="size-4.5" /> : <MicOff className="size-4.5" />}
-                    </Button>
-                    <Input
+                    </button>
+                    <input
                       ref={realtimeInputRef}
                       value={realtimeText}
                       onChange={(event) => setRealtimeText(event.target.value)}
-                      className="h-12 flex-1 rounded-[1.1rem] border-white/10 bg-[#1f2623] px-5 text-[0.98rem] text-zinc-100 placeholder:text-zinc-500 focus-visible:border-[#b9f075]/35 focus-visible:ring-[#b9f075]/15"
+                      className="h-10 min-w-0 flex-1 rounded-[0.95rem] border border-white/10 bg-[#222925] px-4 text-[15px] text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-[#b9f075]/35 focus:ring-2 focus:ring-[#b9f075]/10"
                       placeholder="Type to the realtime session"
                       onKeyDown={(event) => {
                         if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
@@ -1031,10 +1106,9 @@ export default function App() {
                         }
                       }}
                     />
-                    <Button
-                      size="default"
-                      variant="outline"
-                      className="h-12 shrink-0 rounded-[1rem] border-white/10 bg-[#1f2623] px-4 text-zinc-100 hover:bg-[#252d29]"
+                    <button
+                      type="button"
+                      className="flex h-10 shrink-0 items-center gap-2 rounded-[0.9rem] border border-white/10 bg-[#222925] px-3 text-zinc-200 transition hover:bg-[#272f2a] disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={() => {
                         try {
                           skipAssistant();
@@ -1047,17 +1121,17 @@ export default function App() {
                     >
                       <SkipForward className="size-4" />
                       Skip
-                    </Button>
-                    <Button
-                      size="icon-lg"
-                      variant="outline"
-                      className="size-12 shrink-0 rounded-[1rem] border-white/10 bg-[#1f2623] text-zinc-100 hover:bg-[#252d29]"
+                    </button>
+                    <button
+                      type="button"
+                      className="flex h-10 shrink-0 items-center gap-2 rounded-[0.9rem] bg-zinc-100 px-3 text-[13px] font-semibold text-[#171d1b] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={handleSendRealtimeText}
-                      disabled={realtimeStatus !== "active"}
+                      disabled={realtimeStatus !== "active" || !realtimeText.trim()}
                       title="Send Text"
                     >
-                      <Send className="size-4.5" />
-                    </Button>
+                      <Send className="size-4" />
+                      Send
+                    </button>
                   </div>
                 </>
               )}
@@ -1068,7 +1142,7 @@ export default function App() {
                 </div>
               ) : null}
 
-              <ConversationPanel messages={realtimeMessages} />
+              <RealtimeConversationPanel messages={realtimeMessages} />
             </PanelShell>
 
             <PanelShell
