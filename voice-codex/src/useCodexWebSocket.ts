@@ -14,7 +14,13 @@ import type {
   CodexRelayState,
   CodexSegmentMode,
 } from "./types";
-import { CODEX_MODEL, CODEX_REASONING_EFFORT, getCodexProjectCwd } from "./codexConfig";
+import {
+  CODEX_APPROVAL_POLICY,
+  CODEX_MODEL,
+  CODEX_REASONING_EFFORT,
+  CODEX_SANDBOX_MODE,
+  getCodexProjectCwd,
+} from "./codexConfig";
 
 let nextId = 1;
 
@@ -1137,8 +1143,8 @@ export function useCodexWebSocket(options: UseCodexWebSocketOptions = {}) {
       config: {
         model_reasoning_effort: CODEX_REASONING_EFFORT,
       },
-      approvalPolicy: "never",
-      sandbox: "workspace-write",
+      approvalPolicy: CODEX_APPROVAL_POLICY,
+      sandbox: CODEX_SANDBOX_MODE,
       sessionStartSource: "startup",
     });
     const result = (resp as { result: { thread: Thread } }).result;

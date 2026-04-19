@@ -116,6 +116,9 @@ type PersistedReconnectIntent = {
 };
 
 function buildRealtimeConnectInstructions(messages: RealtimeMessage[]) {
+  const projectPath =
+    (typeof window !== "undefined" ? window.IDEBridge?.projectPath?.trim() : "") ||
+    getCodexProjectCwd();
   const recentTranscript = messages
     .filter(
       (message) =>
@@ -136,6 +139,10 @@ function buildRealtimeConnectInstructions(messages: RealtimeMessage[]) {
 
   return [
     REALTIME_CONNECT_INSTRUCTIONS,
+    "",
+    `Current project path: ${projectPath}`,
+    "Treat project/file/code requests as referring to this project by default.",
+    "If the user says things like \"it\", \"that\", \"same thing\", \"make it bigger\", or a short numeric follow-up, interpret them relative to the most recent relevant coding task when plausible.",
     "",
     "Page refreshed. Transcript below restored from UI history only.",
     "Use it as context. Do not greet, summarize, or answer this restore by itself.",
@@ -222,6 +229,9 @@ function shouldForceCodexDispatch(text: string) {
 }
 
 function buildManagedCodexRequest(originalText: string, normalizedText: string) {
+  const projectPath =
+    (typeof window !== "undefined" ? window.IDEBridge?.projectPath?.trim() : "") ||
+    getCodexProjectCwd();
   const original = originalText.trim();
   const normalized = normalizedText.trim() || original;
   return [
@@ -230,6 +240,8 @@ function buildManagedCodexRequest(originalText: string, normalizedText: string) 
     "Treat the cleaned task below as the real user request.",
     "Do not focus on wrapper phrases like \"ask codex to\", \"tell codex to\", or similar orchestration language.",
     "If the original spoken utterance is ambiguous, prefer the cleaned task.",
+    `Current project path: ${projectPath}`,
+    "Assume project/file/code references are relative to that project unless the user says otherwise.",
     "</system_context>",
     "",
     "<original_spoken_utterance>",
@@ -240,6 +252,96 @@ function buildManagedCodexRequest(originalText: string, normalizedText: string) 
     normalized,
     "</cleaned_task>",
   ].join("\n");
+}
+
+type RecentCodexTaskContext = {
+  segmentId: string;
+  sourceUtterance: string;
+  latestOutcome: string | null;
+  latestMilestone: string | null;
+  filesTouched: string[];
+  codexState: CodexSegmentState;
+};
+
+function buildRecentCodexTaskContext(
+  currentSegment: CodexSegment | null,
+  segments: CodexSegment[],
+): RecentCodexTaskContext | null {
+  const relevantSegment =
+    (currentSegment && segmentHasMeaningfulSummary(currentSegment) ? currentSegment : null) ??
+    [...segments]
+      .reverse()
+      .find((segment) => segmentHasMeaningfulSummary(segment)) ??
+    null;
+
+  if (!relevantSegment) return null;
+
+  return {
+    segmentId: relevantSegment.id,
+    sourceUtterance: relevantSegment.sourceUtterance.trim(),
+    latestOutcome: getSegmentFirstLine(relevantSegment.finalOutcome),
+    latestMilestone: getSegmentFirstLine(relevantSegment.latestMilestone),
+    filesTouched: [...relevantSegment.filesEdited, ...relevantSegment.filesRead].slice(-4),
+    codexState: relevantSegment.codexState,
+  };
+}
+
+function looksLikeCodexFollowUp(text: string) {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  if (
+    normalized.includes("what ") ||
+    normalized.includes("why ") ||
+    normalized.includes("how ") ||
+    normalized.includes("did it") ||
+    normalized.includes("is it") ||
+    normalized.includes("are you") ||
+    normalized.includes("remember") ||
+    normalized.includes("history")
+  ) {
+    return false;
+  }
+
+  if (/^\d+(?:px|rem|em|%)?$/.test(normalized)) return true;
+  if (/^(?:more|again|same thing|same|bigger|smaller|softer|warmer|cooler|brighter|darker)$/i.test(normalized)) {
+    return true;
+  }
+
+  return (
+    /^(?:and\s+)?(?:also\s+)?(?:make|set|change|keep|move|turn|remove|add|increase|decrease|raise|lower|push|nudge|try)\s+(?:it|that|this|them)\b/.test(normalized) ||
+    /^(?:and\s+)?(?:also\s+)?(?:make|set|change|keep|move|turn|remove|add|increase|decrease|raise|lower|push|nudge|try)\s+.*\b(?:more|again|bigger|smaller|softer|warmer|cooler|brighter|darker)\b/.test(normalized) ||
+    /^(?:and\s+)?(?:also\s+)?same thing\b/.test(normalized)
+  );
+}
+
+function buildManagedCodexRequestWithContext(
+  originalText: string,
+  normalizedText: string,
+  recentTaskContext: RecentCodexTaskContext | null,
+  isFollowUp: boolean,
+) {
+  const baseRequest = buildManagedCodexRequest(originalText, normalizedText);
+  if (!recentTaskContext || !isFollowUp) return baseRequest;
+
+  const contextLines = [
+    "",
+    "<recent_task_context>",
+    "Treat the cleaned task as a continuation or modification of the most recent relevant Codex task below unless the user clearly changed topic.",
+    `Previous task: ${recentTaskContext.sourceUtterance}`,
+  ];
+
+  if (recentTaskContext.latestOutcome) {
+    contextLines.push(`Latest outcome: ${recentTaskContext.latestOutcome}`);
+  } else if (recentTaskContext.latestMilestone) {
+    contextLines.push(`Latest milestone: ${recentTaskContext.latestMilestone}`);
+  }
+
+  if (recentTaskContext.filesTouched.length > 0) {
+    contextLines.push(`Recent files touched: ${recentTaskContext.filesTouched.join(", ")}`);
+  }
+
+  contextLines.push("</recent_task_context>");
+  return `${baseRequest}\n${contextLines.join("\n")}`;
 }
 
 function getRealtimeInputPlaceholder(
@@ -330,6 +432,105 @@ function buildExactRealtimeMemoryReply(userMessage: string, messages: RealtimeMe
   return "Fresh session after refresh. I only remember messages since reload, not before it.";
 }
 
+function shouldAvoidCodex(text: string) {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  return (
+    /\b(?:dont|don't|do not|without)\s+(?:use\s+)?codex\b/.test(normalized) ||
+    /\bno\s+codex\b/.test(normalized) ||
+    /\bnot\s+codex\b/.test(normalized)
+  );
+}
+
+function shouldForceChatOnly(text: string) {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  return (
+    shouldAvoidCodex(text) ||
+    /\bjust\s+(?:tell|answer|say|chat)\b/.test(normalized) ||
+    /\byourself\b/.test(normalized) ||
+    /\bno need to use codex\b/.test(normalized)
+  );
+}
+
+function asksWhatYouKnowAboutProject(text: string) {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  return (
+    normalized.includes("what do you know about project") ||
+    normalized.includes("what do you know about the project") ||
+    normalized.includes("what do you know about this project") ||
+    normalized.includes("what do you know about our project") ||
+    normalized.includes("what u know about project") ||
+    normalized.includes("what u know about this project") ||
+    normalized.includes("tell me what u know about project") ||
+    normalized.includes("tell me what you know about project") ||
+    normalized.includes("tell me what you know about this project") ||
+    normalized.includes("tell me what u know about this project")
+  );
+}
+
+function buildLocalProjectKnowledgeReply(userMessage: string, segments: CodexSegment[]) {
+  if (!asksWhatYouKnowAboutProject(userMessage)) return null;
+
+  const projectPath =
+    (typeof window !== "undefined" ? window.IDEBridge?.projectPath?.trim() : "") ||
+    getCodexProjectCwd();
+  const latestMeaningfulSegment =
+    [...segments].reverse().find((segment) => segmentHasMeaningfulSummary(segment)) ?? null;
+
+  if (!latestMeaningfulSegment) {
+    return `Without checking Codex: current project path is \`${projectPath}\`. I do not have inspected file or code details yet.`;
+  }
+
+  const latestKnownFact =
+    getSegmentFirstLine(latestMeaningfulSegment.finalOutcome) ||
+    getSegmentFirstLine(latestMeaningfulSegment.latestMilestone) ||
+    getSegmentFirstLine(latestMeaningfulSegment.blockingQuestion);
+  const touchedFiles =
+    [...latestMeaningfulSegment.filesEdited, ...latestMeaningfulSegment.filesRead]
+      .filter(Boolean)
+      .slice(-4);
+
+  return [
+    `Without checking Codex: current project path is \`${projectPath}\`.`,
+    latestKnownFact ? `Latest known context from this session: ${latestKnownFact}` : null,
+    touchedFiles.length > 0 ? `Recent files mentioned: ${touchedFiles.join(", ")}.` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function asksWhatShouldIDo(text: string) {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  return (
+    normalized === "what should i do" ||
+    normalized === "what should i do?" ||
+    normalized === "what do i do" ||
+    normalized === "what do i do?" ||
+    normalized.includes("what should i do next") ||
+    normalized.includes("what do i do next")
+  );
+}
+
+function buildLocalAdvisoryReply(userMessage: string, segments: CodexSegment[]) {
+  if (!asksWhatShouldIDo(userMessage)) return null;
+
+  const latestMeaningfulSegment =
+    [...segments].reverse().find((segment) => segmentHasMeaningfulSummary(segment)) ?? null;
+  const latestKnownFact =
+    getSegmentFirstLine(latestMeaningfulSegment?.finalOutcome) ||
+    getSegmentFirstLine(latestMeaningfulSegment?.latestMilestone) ||
+    null;
+
+  if (!latestKnownFact) {
+    return "Two paths. If you want real project advice, let me inspect the code with Codex. If you want no Codex, ask what I know so far and I’ll stay local.";
+  }
+
+  return `Based on current session context: ${latestKnownFact} If you want better next steps, let me inspect more with Codex.`;
+}
+
 function extractTouchedPath(command: string) {
   const match = command.match(/(?:cat|ls|nl -ba|sed -n '[^']+'|rg --files)\s+(['"]?)([^'"\n]+)\1/);
   if (!match) return null;
@@ -411,6 +612,48 @@ function summarizeSegmentActivitiesForSpeech(activities: CodexSegmentActivity[])
 
   if (summarized.length === 0) return null;
   return summarized.join(" ").slice(0, 220);
+}
+
+function summarizeActivityForStatus(activity: CodexSegmentActivity) {
+  const summary = activity.summary.trim().replace(/\.$/, "");
+  if (!summary) return null;
+
+  if (activity.kind === "read") {
+    return "read files";
+  }
+
+  if (activity.kind === "edit") {
+    const file = formatActivityFileLabel(summary, undefined);
+    return file ? `edited ${file}` : "edited files";
+  }
+
+  if (activity.kind === "command") {
+    if (/\b(?:npm|pnpm|yarn)\s+(?:run\s+)?build\b/i.test(summary)) return "ran a build";
+    if (/\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|lint|check|typecheck|validate)\b/i.test(summary)) return "ran checks";
+    if (/\b(?:npm|pnpm|yarn)\s+install\b/i.test(summary)) return "installed packages";
+    return "ran a command";
+  }
+
+  if (activity.kind === "plan") return "planned next steps";
+  if (activity.kind === "error") return "hit an error";
+  return summary.toLowerCase();
+}
+
+function buildRecentActivityOverview(segment: CodexSegment | null) {
+  if (!segment) return null;
+
+  const recentSteps = [...segment.activities]
+    .reverse()
+    .filter((activity) => activity.kind === "read" || activity.kind === "edit" || activity.kind === "command" || activity.kind === "plan")
+    .map((activity) => summarizeActivityForStatus(activity))
+    .filter((step): step is string => Boolean(step))
+    .filter((step, index, array) => array.indexOf(step) === index)
+    .slice(0, 3);
+
+  if (recentSteps.length === 0) return null;
+  if (recentSteps.length === 1) return `Recent step: ${recentSteps[0]}.`;
+  if (recentSteps.length === 2) return `Recent steps: ${recentSteps[0]}, then ${recentSteps[1]}.`;
+  return `Recent steps: ${recentSteps[0]}, then ${recentSteps[1]}, then ${recentSteps[2]}.`;
 }
 
 function summarizeSegmentStatus(segment: CodexSegment | null, agentEvents: AgentEvent[] = []) {
@@ -574,8 +817,7 @@ function summarizeRunningSegmentForSpeech(
   }
 
   if (latestProgressMessage?.inferredKind === "read") {
-    const latestReadFile = formatActivityFileLabel(latestProgressMessage.text ?? "", segment.filesRead.at(-1));
-    return capSpeechReply(latestReadFile ? `Reading ${latestReadFile}.` : "Reading files.");
+    return capSpeechReply("Reading files.");
   }
 
   const latestRelevantActivity = [...segment.activities]
@@ -588,8 +830,7 @@ function summarizeRunningSegmentForSpeech(
   }
 
   if (latestRelevantActivity?.kind === "read" || workingLabel === "reading files...") {
-    const latestReadFile = formatActivityFileLabel(latestRelevantActivity?.summary ?? "", segment.filesRead.at(-1));
-    return capSpeechReply(latestReadFile ? `Reading ${latestReadFile}.` : "Reading files.");
+    return capSpeechReply("Reading files.");
   }
 
   if (latestRelevantActivity?.kind === "command" || workingLabel === "running checks..." || workingLabel === "running command...") {
@@ -706,6 +947,7 @@ function buildExactCodexRelayReply(
   if (segment.codexState === "running") {
     const shortStatusText = summarizeRunningSegmentForSpeech(segment, segmentMessages);
     const normalizedShortStatus = normalizeRunningStatusSummary(shortStatusText);
+    const recentOverview = buildRecentActivityOverview(segment);
     if (asksAboutTiming) {
       if (latestCommandLooksLikeBuild(latestCommand)) {
         return "Hard to tell exactly. Codex is running a build right now.";
@@ -722,6 +964,9 @@ function buildExactCodexRelayReply(
     ) {
       const shortStatus = shortStatusText.replace(/\.$/, "");
       return `Still ${shortStatus.charAt(0).toLowerCase()}${shortStatus.slice(1)}, nothing new since you last asked.`.slice(0, 120);
+    }
+    if (recentOverview) {
+      return `${shortStatusText} ${recentOverview}`.slice(0, 220);
     }
     return shortStatusText;
   }
@@ -1924,9 +2169,37 @@ export default function App() {
         return;
       }
 
+      const forceChatOnly = shouldForceChatOnly(latestFinalUserMessage.text);
+      const exactLocalAdvisoryReply = forceChatOnly
+        ? buildLocalAdvisoryReply(latestFinalUserMessage.text, segments)
+        : null;
+      if (exactLocalAdvisoryReply) {
+        addDebugNote("relay_local_advice", `reply=${exactLocalAdvisoryReply}`);
+        sendRealtimeText(
+          `Say exactly this to the user and nothing else:\n${exactLocalAdvisoryReply}`,
+          { requestResponse: true, visible: false },
+        );
+        return;
+      }
+
+      const exactLocalProjectReply = forceChatOnly
+        ? buildLocalProjectKnowledgeReply(latestFinalUserMessage.text, segments)
+        : null;
+      if (exactLocalProjectReply) {
+        addDebugNote("relay_local_project_context", `reply=${exactLocalProjectReply}`);
+        sendRealtimeText(
+          `Say exactly this to the user and nothing else:\n${exactLocalProjectReply}`,
+          { requestResponse: true, visible: false },
+        );
+        return;
+      }
+
       const forceCodexDispatch = shouldForceCodexDispatch(latestFinalUserMessage.text);
+      const recentCodexTaskContext = buildRecentCodexTaskContext(currentSegment, segments);
+      const continuationFollowUp =
+        Boolean(recentCodexTaskContext) && looksLikeCodexFollowUp(latestFinalUserMessage.text);
       let routed = routeCacheRef.current.get(latestFinalUserMessage.id);
-      if (!routed && !forceCodexDispatch) {
+      if (!routed && !forceCodexDispatch && !forceChatOnly) {
         routed = await routeIntent(latestFinalUserMessage.text, currentCodexState === "running" || currentCodexState === "waiting_for_user");
         if (abortIfSuperseded()) return;
         routeCacheRef.current.set(latestFinalUserMessage.id, routed);
@@ -1935,6 +2208,14 @@ export default function App() {
         routed = activeTurnStatus === "running"
           ? { action: "codex_steer", chat_mode: "normal", reason: "forced_wrapper_dispatch" }
           : { action: "codex_start", chat_mode: "normal", reason: "forced_wrapper_dispatch" };
+      }
+      if (!routed && forceChatOnly) {
+        routed = { action: "chat_only", chat_mode: "normal", reason: "forced_chat_only" };
+      }
+      if ((!routed || routed.action === "chat_only") && continuationFollowUp && !forceChatOnly) {
+        routed = activeTurnStatus === "running"
+          ? { action: "codex_steer", chat_mode: "normal", reason: "follow_up_continuation" }
+          : { action: "codex_start", chat_mode: "normal", reason: "follow_up_continuation" };
       }
       if (abortIfSuperseded()) return;
       if (!routed) return;
@@ -2036,10 +2317,15 @@ export default function App() {
 
       const codexDispatchText = normalizeCodexDispatchText(latestFinalUserMessage.text);
       const visibleCodexRequest = codexDispatchText || latestFinalUserMessage.text;
-      const managedCodexRequest = buildManagedCodexRequest(latestFinalUserMessage.text, visibleCodexRequest);
+      const managedCodexRequest = buildManagedCodexRequestWithContext(
+        latestFinalUserMessage.text,
+        visibleCodexRequest,
+        recentCodexTaskContext,
+        continuationFollowUp,
+      );
       addDebugNote(
         "codex_dispatch_text",
-        `original=${latestFinalUserMessage.text}; normalized=${visibleCodexRequest}`,
+        `original=${latestFinalUserMessage.text}; normalized=${visibleCodexRequest}; follow_up=${continuationFollowUp ? "yes" : "no"}; context_segment=${recentCodexTaskContext?.segmentId ?? "none"}`,
       );
 
       let activeThread = thread;

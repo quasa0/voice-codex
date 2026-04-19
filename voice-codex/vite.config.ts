@@ -136,6 +136,8 @@ async function routeIntentWithServerModel(payload: {
               'Prefer codex_steer for follow-up project questions or modifications when Codex is already running.',
               'Prefer codex_interrupt only when the user clearly redirects or replaces in-flight Codex work.',
               'Prefer chat_only only for casual conversation, generic knowledge, or pure voice-control requests like "stop", "stop yapping", "be quiet", or similar.',
+              'If the user explicitly says not to use Codex, no Codex, without Codex, just tell me yourself, or similar, use action=chat_only.',
+              'If the user asks what you currently know already and that can be answered from existing conversation/context without fresh project inspection, use action=chat_only.',
               'If the user asks what Codex is doing right now, current progress, current status, or similar, use action=chat_only and chat_mode=relay_codex_status.',
               'If the user asks why Codex responded a certain way, why it clarified, what happened in the current run, whether it was interrupted, or similar meta-questions about active Codex behavior, use action=chat_only and chat_mode=relay_codex_status.',
               'If the user asks to hear, repeat, summarize, or relay the latest Codex result, use action=chat_only and chat_mode=relay_latest_codex.',
@@ -146,7 +148,7 @@ async function routeIntentWithServerModel(payload: {
               'Treat currentSegment, latestCompletedSegment, currentCodexStatus, and latestSegmentMessages as the source of truth for Codex segment state and timeline. Do not over-focus on latestCodexReply when the user is asking about current behavior, timeline, or why something happened.',
               'Examples that MUST route to Codex: "tell me about our todo app", "what files do we have", "how is this implemented", "what did Codex build", "explain this project".',
               'Examples that should use relay_codex_status: "what is it doing right now", "what is Codex doing rn", "summarize current Codex activity".',
-              'Examples that can stay chat_only: "stop", "thanks", "what is React", "explain CRUD generally".',
+              'Examples that can stay chat_only: "stop", "thanks", "what is React", "explain CRUD generally", "dont use codex, tell me what you know about this project".',
             ].join(' '),
         },
         {
