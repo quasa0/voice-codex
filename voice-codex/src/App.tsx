@@ -1334,7 +1334,7 @@ export default function App() {
           <div className="grid items-stretch gap-4 md:grid-cols-2">
             <PanelShell
               title="OpenAI Realtime"
-              description="Direct voice lane over the OpenAI Realtime API."
+              description="Direct voice chat."
               icon={<WandSparkles className="size-4" />}
               headerRight={
                 <RealtimeStatusBadge isMuted={isMicMuted} realtimeStatus={realtimeStatus} />
