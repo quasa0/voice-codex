@@ -441,11 +441,6 @@ function formatStatusLabel(value: string) {
     .join("-");
 }
 
-function isPaneOnlyQuery(search: string) {
-  const params = new URLSearchParams(search);
-  return params.get("embed") === "true";
-}
-
 function TimestampLabel({ timestamp, className = "" }: { timestamp: string; className?: string }) {
   return (
     <span
@@ -1051,9 +1046,6 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [codexTaskText, setCodexTaskText] = useState("");
-  const [locationSearch, setLocationSearch] = useState(() =>
-    typeof window === "undefined" ? "" : window.location.search,
-  );
 
   const {
     status,
@@ -1108,20 +1100,7 @@ export default function App() {
   const currentSegment = getCurrentSegment(segments);
   const currentCodexState: CodexSegmentState = currentSegment?.codexState ?? "idle";
   const currentCodexStatus = summarizeSegmentStatus(currentSegment, agentEvents);
-  const paneOnlyMode = isPaneOnlyQuery(locationSearch);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const syncLocationSearch = () => {
-      setLocationSearch(window.location.search);
-    };
-
-    window.addEventListener("popstate", syncLocationSearch);
-    return () => {
-      window.removeEventListener("popstate", syncLocationSearch);
-    };
-  }, []);
+  const paneOnlyMode = true;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
