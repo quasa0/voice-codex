@@ -119,6 +119,10 @@ function controlSurfaceClass() {
   return "rounded-xl border-white/10 bg-[#1f2724] text-zinc-100 shadow-none";
 }
 
+function panelBadgeClass() {
+  return "h-8 rounded-full border-[#b9f075]/20 bg-[#b9f075]/10 px-3 text-[13px] font-medium text-[#d8f5ab]";
+}
+
 function eventToneClass(method?: string) {
   if (!method) return "text-zinc-400";
   if (method.startsWith("turn/")) return "text-white";
@@ -143,7 +147,7 @@ function PanelShell({
   contentClassName?: string;
 }) {
   return (
-    <Card className="border-white/8 bg-[#1d2421]/92 shadow-2xl shadow-black/20 backdrop-blur-sm">
+    <Card className="h-full border-white/8 bg-[#1d2421]/92 shadow-2xl shadow-black/20 backdrop-blur-sm">
       <CardHeader className="space-y-1 pb-3">
         <div className="flex items-center gap-3">
           {icon ? (
@@ -284,7 +288,7 @@ function EventPanel({ events }: { events: AgentEvent[] }) {
 function CodexConversationPanel({ messages }: { messages: CodexMessage[] }) {
   return (
     <div className="rounded-xl border border-white/8 bg-[#171d1b] p-3">
-      <ScrollArea className="h-[18rem] pr-3">
+      <ScrollArea className="h-[24rem] pr-3">
         <div className="flex flex-col-reverse gap-1.5">
           {messages.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-white/8 bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
@@ -321,7 +325,7 @@ function CodexConversationPanel({ messages }: { messages: CodexMessage[] }) {
 function ConversationPanel({ messages }: { messages: RealtimeMessage[] }) {
   return (
     <div className="rounded-xl border border-white/8 bg-[#171d1b] p-3">
-      <ScrollArea className="h-[18rem] pr-3">
+      <ScrollArea className="h-[24rem] pr-3">
         <div className="flex flex-col-reverse gap-1.5">
           {messages.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-white/8 bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
@@ -744,12 +748,12 @@ export default function App() {
         </Card>
 
         <div className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid items-stretch gap-4 md:grid-cols-2">
             <PanelShell
               title="OpenAI Realtime"
               description="Direct voice lane over the OpenAI Realtime API."
               icon={<WandSparkles className="size-4" />}
-              contentClassName="space-y-4"
+              contentClassName="flex min-h-[36rem] flex-col space-y-4"
             >
               {realtimeStatus === "idle" || realtimeStatus === "error" ? (
                 <div className="flex min-h-[11rem] items-center justify-center">
@@ -765,14 +769,14 @@ export default function App() {
               ) : (
                 <>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge className={`gap-2 ${statusBadgeClass(realtimeStatus)}`}>
+                    <Badge className={`gap-2 ${panelBadgeClass()}`}>
                       <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
                       {realtimeStatus}
                     </Badge>
-                    <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
+                    <Badge variant="outline" className={panelBadgeClass()}>
                       {isMicMuted ? "muted" : "live"}
                     </Badge>
-                    <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
+                    <Badge variant="outline" className={panelBadgeClass()}>
                       {realtimeConnectedAt ? formatDuration(realtimeElapsedSeconds) : "--:--"}
                     </Badge>
                     {realtimeLastError ? (
@@ -844,33 +848,33 @@ export default function App() {
               title="Codex App Server"
               description="Preserved local Codex control path for threads, auth, and later voice-to-code orchestration."
               icon={<Cable className="size-4" />}
-              contentClassName="space-y-4"
+              contentClassName="flex min-h-[36rem] flex-col space-y-4"
             >
               <div className="flex flex-wrap items-center gap-2">
-                <Badge className={`gap-2 ${statusBadgeClass(status)}`}>
+                <Badge className={`gap-2 ${panelBadgeClass()}`}>
                   <span className={`size-1.5 rounded-full ${statusDotClass(status)}`} />
                   Codex {status}
                 </Badge>
                 {account?.type ? (
-                  <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-200">
+                  <Badge variant="outline" className={panelBadgeClass()}>
                     Auth {account.type}
                   </Badge>
                 ) : null}
                 {thread ? (
-                  <Badge variant="outline" className="border-[#b9f075]/20 bg-[#b9f075]/10 text-[#d8f5ab]">
+                  <Badge variant="outline" className={panelBadgeClass()}>
                     Thread ready
                   </Badge>
                 ) : (
-                  <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
+                  <Badge variant="outline" className={panelBadgeClass()}>
                     Bootstrapping…
                   </Badge>
                 )}
                 {thread ? (
-                  <Badge variant="outline" className="border-[#b9f075]/20 bg-[#b9f075]/10 text-[#d8f5ab]">
+                  <Badge variant="outline" className={panelBadgeClass()}>
                     Voice bridge active
                   </Badge>
                 ) : null}
-                <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
+                <Badge variant="outline" className={panelBadgeClass()}>
                   Turn {activeTurnStatus}
                 </Badge>
               </div>
