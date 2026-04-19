@@ -1342,7 +1342,7 @@ export default function App() {
   };
 
   return (
-    <div className="dark min-h-screen bg-transparent text-zinc-50">
+    <div className={`dark bg-transparent text-zinc-50 ${paneOnlyMode ? "h-screen overflow-hidden" : "min-h-screen"}`}>
       <style>{`
         @keyframes realtime-wave {
           0%, 100% { transform: scaleY(0.48); opacity: 0.86; }
@@ -1380,7 +1380,7 @@ export default function App() {
           animation: codex-working-sheen 2.9s ease-in-out infinite;
         }
       `}</style>
-      <div className={`flex flex-col gap-4 ${paneOnlyMode ? "w-full px-3 py-3 sm:px-4 lg:px-5" : "mx-auto max-w-[1180px] px-3 py-4 sm:px-5 lg:px-6"}`}>
+      <div className={`flex flex-col gap-4 ${paneOnlyMode ? "h-full w-full px-3 py-3 sm:px-4 lg:px-5" : "mx-auto max-w-[1180px] px-3 py-4 sm:px-5 lg:px-6"}`}>
         {!paneOnlyMode ? (
           <Card className="overflow-hidden border-white/8 bg-[#1b221f]/96 shadow-xl shadow-black/20">
             <CardContent className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
@@ -1402,8 +1402,8 @@ export default function App() {
           </Card>
         ) : null}
 
-        <div className="space-y-4">
-          <div className="grid items-stretch gap-4 md:grid-cols-2">
+        <div className={paneOnlyMode ? "flex min-h-0 flex-1 flex-col" : "space-y-4"}>
+          <div className={`grid items-stretch gap-4 md:grid-cols-2 ${paneOnlyMode ? "min-h-0 flex-1 auto-rows-fr" : ""}`}>
             <PanelShell
               title="Realtime Agent"
               description="Direct voice chat."
@@ -1411,7 +1411,7 @@ export default function App() {
               headerRight={
                 <RealtimeStatusBadge isMuted={isMicMuted} realtimeStatus={realtimeStatus} />
               }
-              contentClassName="flex min-h-[36rem] flex-col space-y-4"
+              contentClassName={`flex flex-col space-y-4 ${paneOnlyMode ? "min-h-0 h-full" : "min-h-[36rem]"}`}
             >
               {realtimeStatus === "idle" || realtimeStatus === "error" ? (
                 <div className="flex min-h-[11rem] items-center justify-center">
@@ -1527,7 +1527,7 @@ export default function App() {
               description="Local Codex agent."
               icon={<Cable className="size-4" />}
               headerRight={<CodexStatusBadge codexState={currentCodexState} />}
-              contentClassName="flex min-h-[36rem] flex-col space-y-4"
+              contentClassName={`flex flex-col space-y-4 ${paneOnlyMode ? "min-h-0 h-full" : "min-h-[36rem]"}`}
             >
               <div className="flex min-h-10 flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
