@@ -179,24 +179,24 @@ function JsonRpcLogPanel({ entries }: { entries: LogEntry[] }) {
       contentClassName="pt-0"
     >
       <ScrollArea className="h-[19rem] pr-3">
-        <div className="space-y-3">
+        <div className="space-y-1.5 rounded-xl border border-white/8 bg-[#171d1b] p-3 font-mono">
           {entries.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-sm text-zinc-500">
+            <div className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-3 py-5 text-sm text-zinc-500">
               No JSON-RPC traffic yet.
             </div>
           ) : (
             entries.map((entry) => (
               <div
                 key={entry.id}
-                className="rounded-xl border border-white/8 bg-[#171d1b] p-3 font-mono text-xs text-zinc-300"
+                className="rounded-md px-2 py-2 text-xs text-zinc-300 odd:bg-white/[0.015]"
               >
-                <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+                <div className="mb-1.5 flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-zinc-500">
                   <span>{entry.timestamp}</span>
                   <span className={entry.direction === "sent" ? "text-white" : "text-zinc-300"}>
                     {entry.direction === "sent" ? "sent" : "received"}
                   </span>
                 </div>
-                <pre className="overflow-x-auto whitespace-pre-wrap break-all text-[11px] leading-5">
+                <pre className="overflow-x-auto whitespace-pre-wrap break-all text-[10.5px] leading-4.5">
                   {JSON.stringify(entry.message, null, 2)}
                 </pre>
               </div>
@@ -217,18 +217,18 @@ function RealtimeLogPanel({ entries }: { entries: RealtimeLog[] }) {
       contentClassName="pt-0"
     >
       <ScrollArea className="h-[19rem] pr-3">
-        <div className="space-y-3">
+        <div className="space-y-1.5 rounded-xl border border-white/8 bg-[#171d1b] p-3 font-mono">
           {entries.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-sm text-zinc-500">
+            <div className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-3 py-5 text-sm text-zinc-500">
               No OpenAI Realtime events yet.
             </div>
           ) : (
             entries.map((entry) => (
               <div
                 key={entry.id}
-                className="rounded-xl border border-white/8 bg-[#171d1b] p-3 font-mono text-xs text-zinc-300"
+                className="rounded-md px-2 py-2 text-xs text-zinc-300 odd:bg-white/[0.015]"
               >
-                <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+                <div className="mb-1.5 flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-zinc-500">
                   <span>{entry.timestamp}</span>
                   <span
                     className={
@@ -242,7 +242,7 @@ function RealtimeLogPanel({ entries }: { entries: RealtimeLog[] }) {
                     {entry.label}
                   </span>
                 </div>
-                <pre className="overflow-x-auto whitespace-pre-wrap break-all text-[11px] leading-5">
+                <pre className="overflow-x-auto whitespace-pre-wrap break-all text-[10.5px] leading-4.5">
                   {entry.body}
                 </pre>
               </div>
@@ -265,19 +265,19 @@ function EventPanel({ events }: { events: AgentEvent[] }) {
       contentClassName="pt-0"
     >
       <ScrollArea className="h-[19rem] pr-3">
-        <div className="space-y-3">
+        <div className="space-y-1.5 rounded-xl border border-white/8 bg-[#171d1b] p-3 font-mono">
           {filtered.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-sm text-zinc-500">
+            <div className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-3 py-5 text-sm text-zinc-500">
               No agent events yet.
             </div>
           ) : (
             filtered.map((event) => (
-              <div key={event.id} className="rounded-xl border border-white/8 bg-[#171d1b] p-3">
-                <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+              <div key={event.id} className="rounded-md px-2 py-2 odd:bg-white/[0.015]">
+                <div className="mb-1.5 flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-zinc-500">
                   <span>{event.timestamp}</span>
                   <span className={eventToneClass(event.method)}>{event.method}</span>
                 </div>
-                <p className="text-sm leading-6 text-zinc-300">{event.summary}</p>
+                <p className="text-[12px] leading-4.5 text-zinc-300">{event.summary}</p>
               </div>
             ))
           )}
