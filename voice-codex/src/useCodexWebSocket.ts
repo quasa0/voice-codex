@@ -29,6 +29,12 @@ function truncateLine(text: string, maxLength = 220) {
   return singleLine.slice(0, maxLength) || null;
 }
 
+type IdeFocusTarget = {
+  path: string;
+  lineStart?: number;
+  lineEnd?: number;
+};
+
 function trimWrappedQuotes(value: string) {
   return value.replace(/^['"]|['"]$/g, "");
 }
@@ -114,6 +120,17 @@ function extractCommandFilePath(command: string) {
   );
 }
 
+function extractCommandLineRange(command: string): { lineStart?: number; lineEnd?: number } | null {
+  const { innerCommand } = parseCommandContext(command);
+  const sedMatch = innerCommand.match(/sed -n '(\d+)(?:,(\d+))?p'/);
+  if (!sedMatch) return null;
+
+  const lineStart = Number.parseInt(sedMatch[1] ?? "", 10);
+  const lineEnd = Number.parseInt(sedMatch[2] ?? sedMatch[1] ?? "", 10);
+  if (!Number.isFinite(lineStart) || !Number.isFinite(lineEnd)) return null;
+  return { lineStart, lineEnd };
+}
+
 function extractEditedPath(item: Record<string, unknown>) {
   const pathCandidate = [
     item.path,
@@ -140,6 +157,62 @@ function extractEditedAbsolutePath(item: Record<string, unknown>) {
   if (typeof pathCandidate !== "string") return null;
   const normalized = trimWrappedQuotes(pathCandidate.trim());
   return joinProjectPath(projectCwd, normalized);
+}
+
+function parseLineNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(1, Math.floor(value));
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed)) return Math.max(1, parsed);
+  }
+  return undefined;
+}
+
+function extractPatchLineRange(text: string | null | undefined): { lineStart?: number; lineEnd?: number } | null {
+  if (!text) return null;
+  const hunkMatch = text.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
+  if (!hunkMatch) return null;
+
+  const lineStart = parseLineNumber(hunkMatch[1]);
+  const lineCount = parseLineNumber(hunkMatch[2] ?? "1") ?? 1;
+  if (!lineStart) return null;
+  return {
+    lineStart,
+    lineEnd: Math.max(lineStart, lineStart + Math.max(1, lineCount) - 1),
+  };
+}
+
+function extractFileChangeLineRange(item: Record<string, unknown>): { lineStart?: number; lineEnd?: number } | null {
+  const directStart = parseLineNumber(
+    item.lineStart ?? item.startLine ?? item.line ?? item.lineNumber ?? item.start ?? item.start_line,
+  );
+  const directEnd = parseLineNumber(
+    item.lineEnd ?? item.endLine ?? item.end ?? item.end_line,
+  );
+  if (directStart || directEnd) {
+    return {
+      lineStart: directStart ?? directEnd,
+      lineEnd: directEnd ?? directStart,
+    };
+  }
+
+  const range = item.range as Record<string, unknown> | undefined;
+  const nestedStart = parseLineNumber(
+    range?.lineStart ?? range?.startLine ?? (range?.start as Record<string, unknown> | undefined)?.line,
+  );
+  const nestedEnd = parseLineNumber(
+    range?.lineEnd ?? range?.endLine ?? (range?.end as Record<string, unknown> | undefined)?.line,
+  );
+  if (nestedStart || nestedEnd) {
+    return {
+      lineStart: nestedStart ?? nestedEnd,
+      lineEnd: nestedEnd ?? nestedStart,
+    };
+  }
+
+  return extractPatchLineRange(
+    String(item.patch ?? item.diff ?? item.unifiedDiff ?? item.output ?? item.summary ?? item.description ?? ""),
+  );
 }
 
 function summarizeCommandLabel(item: Record<string, unknown>) {
@@ -232,18 +305,35 @@ export function useCodexWebSocket() {
   const pendingNextTurnSegmentIdRef = useRef<string | null>(null);
   const activeSegmentIdRef = useRef<string | null>(null);
   const codexMessagesRef = useRef<CodexMessage[]>([]);
-  const lastIdeOpenedPathRef = useRef<string | null>(null);
+  const lastIdeOpenedTargetRef = useRef<string | null>(null);
 
   useEffect(() => {
     codexMessagesRef.current = codexMessages;
   }, [codexMessages]);
 
-  const openFileInIde = useCallback((path: string | null | undefined) => {
-    const normalizedPath = path?.trim();
-    if (!normalizedPath || typeof window === "undefined" || !window.IDEBridge?.openFile) return;
-    if (lastIdeOpenedPathRef.current === normalizedPath) return;
-    lastIdeOpenedPathRef.current = normalizedPath;
-    window.IDEBridge.openFile(normalizedPath);
+  const openFileInIde = useCallback((target: IdeFocusTarget | null | undefined) => {
+    const normalizedPath = target?.path?.trim();
+    if (!normalizedPath || typeof window === "undefined") return;
+    const focusTarget = target as IdeFocusTarget;
+
+    const serializedTarget = JSON.stringify({
+      path: normalizedPath,
+      lineStart: focusTarget.lineStart ?? null,
+      lineEnd: focusTarget.lineEnd ?? null,
+    });
+    if (lastIdeOpenedTargetRef.current === serializedTarget) return;
+    lastIdeOpenedTargetRef.current = serializedTarget;
+
+    if (window.IDEBridge?.focusFile) {
+      window.IDEBridge.focusFile({
+        path: normalizedPath,
+        lineStart: focusTarget.lineStart,
+        lineEnd: focusTarget.lineEnd,
+      });
+      return;
+    }
+
+    window.IDEBridge?.openFile?.(normalizedPath);
   }, []);
 
   const updateSegment = useCallback((segmentId: string | null | undefined, updater: (segment: CodexSegment) => CodexSegment) => {
@@ -329,7 +419,8 @@ export function useCodexWebSocket() {
     const command = String(item.command ?? "").trim();
     const touchedPath = extractTouchedPath(command);
     const idePath = extractCommandFilePath(command);
-    openFileInIde(idePath);
+    const commandLineRange = extractCommandLineRange(command);
+    openFileInIde(idePath ? { path: idePath, ...commandLineRange } : null);
     updateSegment(segmentId, (segment) => ({
       ...segment,
       codexState: "running",
@@ -381,7 +472,8 @@ export function useCodexWebSocket() {
     if (!segmentId) return;
     const editedPath = extractEditedPath(item);
     const absoluteEditedPath = extractEditedAbsolutePath(item);
-    openFileInIde(absoluteEditedPath);
+    const fileChangeLineRange = extractFileChangeLineRange(item);
+    openFileInIde(absoluteEditedPath ? { path: absoluteEditedPath, ...fileChangeLineRange } : null);
     const milestone = truncateLine(String(item.summary ?? item.description ?? "Updated files"));
     updateSegment(segmentId, (segment) => ({
       ...segment,

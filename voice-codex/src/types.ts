@@ -94,6 +94,7 @@ declare global {
     IDEBridge?: {
       projectPath?: string;
       openFile: (path: string) => void;
+      focusFile?: (payload: { path: string; lineStart?: number; lineEnd?: number }) => void;
     };
   }
 }

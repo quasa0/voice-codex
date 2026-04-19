@@ -3,7 +3,13 @@ package com.github.quasa0.realtimecodexinwebstormplugin.toolWindow
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.editor.ScrollType
+import com.intellij.openapi.editor.markup.EffectType
+import com.intellij.openapi.editor.markup.HighlighterLayer
+import com.intellij.openapi.editor.markup.HighlighterTargetArea
+import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.wm.ToolWindow
@@ -37,17 +43,18 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                 ApplicationManager.getApplication().invokeLater {
                     val normalizedPath = requestedPath.trim()
                     if (normalizedPath.isEmpty()) return@invokeLater
+                    focusFileInIde(project, IdeFocusTarget(path = normalizedPath))
+                }
 
-                    val ioFile = if (normalizedPath.startsWith("/")) {
-                        File(normalizedPath)
-                    } else {
-                        val basePath = project.basePath ?: return@invokeLater
-                        File(basePath, normalizedPath)
-                    }
+                null
+            }
 
-                    val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(ioFile)
-                    if (virtualFile != null) {
-                        FileEditorManager.getInstance(project).openFile(virtualFile, true)
+            val focusFileQuery = JBCefJSQuery.create(browser)
+            focusFileQuery.addHandler { rawPayload ->
+                ApplicationManager.getApplication().invokeLater {
+                    val target = parseFocusTarget(rawPayload)
+                    if (target != null) {
+                        focusFileInIde(project, target)
                     }
                 }
 
@@ -92,6 +99,10 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                               projectPath: "${escapedBasePath}",
                               openFile: function(path) {
                                 ${openFileQuery.inject("path")}
+                              },
+                              focusFile: function(target) {
+                                const payload = [target?.path ?? "", target?.lineStart ?? "", target?.lineEnd ?? ""].join("\t");
+                                ${focusFileQuery.inject("payload")}
                               }
                             };
                             """.trimIndent(),
@@ -135,5 +146,77 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                 .replace("\"", "\\\"")
                 .replace("\n", "\\n")
                 .replace("\r", "\\r")
+
+        private fun parseFocusTarget(rawPayload: String): IdeFocusTarget? {
+            val parts = rawPayload.split("\t")
+            val path = parts.getOrNull(0)?.trim().orEmpty()
+            if (path.isEmpty()) return null
+
+            return IdeFocusTarget(
+                path = path,
+                lineStart = parts.getOrNull(1)?.trim()?.toIntOrNull(),
+                lineEnd = parts.getOrNull(2)?.trim()?.toIntOrNull(),
+            )
+        }
+
+        private fun focusFileInIde(project: Project, target: IdeFocusTarget) {
+            val ioFile = if (target.path.startsWith("/")) {
+                File(target.path)
+            } else {
+                val basePath = project.basePath ?: return
+                File(basePath, target.path)
+            }
+
+            val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(ioFile) ?: return
+            val fileEditorManager = FileEditorManager.getInstance(project)
+            val zeroBasedLine = (target.lineStart ?: 1).coerceAtLeast(1) - 1
+            val editor = fileEditorManager.openTextEditor(
+                OpenFileDescriptor(project, virtualFile, zeroBasedLine, 0).setUseCurrentWindow(true),
+                true,
+            )
+            if (editor == null) {
+                fileEditorManager.openFile(virtualFile, true)
+                return
+            }
+
+            editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
+
+            val lineStart = target.lineStart ?: return
+            val document = editor.document
+            val maxLineIndex = document.lineCount.coerceAtLeast(1) - 1
+            val startLineIndex = (lineStart - 1).coerceIn(0, maxLineIndex)
+            val endLineIndex = ((target.lineEnd ?: lineStart) - 1).coerceIn(startLineIndex, maxLineIndex)
+            val startOffset = document.getLineStartOffset(startLineIndex)
+            val endOffset = document.getLineEndOffset(endLineIndex)
+
+            val attributes = TextAttributes(
+                null,
+                java.awt.Color(185, 240, 117, 60),
+                java.awt.Color(185, 240, 117, 180),
+                EffectType.ROUNDED_BOX,
+                java.awt.Font.PLAIN,
+            )
+
+            val highlighter = editor.markupModel.addRangeHighlighter(
+                startOffset,
+                endOffset,
+                HighlighterLayer.SELECTION + 1,
+                attributes,
+                HighlighterTargetArea.EXACT_RANGE,
+            )
+
+            val timer = javax.swing.Timer(3500) {
+                if (editor.isDisposed) return@Timer
+                editor.markupModel.removeHighlighter(highlighter)
+            }
+            timer.isRepeats = false
+            timer.start()
+        }
     }
 }
+
+private data class IdeFocusTarget(
+    val path: String,
+    val lineStart: Int? = null,
+    val lineEnd: Int? = null,
+)
