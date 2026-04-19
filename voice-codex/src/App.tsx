@@ -882,23 +882,18 @@ export default function App() {
                 </Badge>
                 {account?.type ? (
                   <Badge variant="outline" className={panelBadgeClass()}>
-                    Auth {account.type}
+                    API
                   </Badge>
                 ) : null}
                 {thread ? (
                   <Badge variant="outline" className={panelBadgeClass()}>
-                    Thread ready
+                    Thread ✓
                   </Badge>
                 ) : (
                   <Badge variant="outline" className={panelBadgeClass()}>
                     Bootstrapping…
                   </Badge>
                 )}
-                {thread ? (
-                  <Badge variant="outline" className={panelBadgeClass()}>
-                    Voice bridge active
-                  </Badge>
-                ) : null}
               </div>
 
               {status === "connected" ? (
