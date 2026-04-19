@@ -125,6 +125,7 @@ declare global {
       projectPath?: string;
       openFile: (path: string) => void;
       focusFile?: (payload: { path: string; lineStart?: number; lineEnd?: number; preferDiff?: boolean }) => void;
+      closeAllTabs?: () => void;
     };
     __VOICE_CODEX_EXPORT_TEXT__?: () => string;
     __VOICE_CODEX_COPY_LOGS__?: () => string;

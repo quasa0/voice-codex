@@ -71,6 +71,15 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                 null
             }
 
+            val closeAllTabsQuery = JBCefJSQuery.create(browser)
+            closeAllTabsQuery.addHandler {
+                ApplicationManager.getApplication().invokeLater {
+                    closeAllOpenTabs(project)
+                }
+
+                null
+            }
+
             val copyExportQuery = JBCefJSQuery.create(browser)
             copyExportQuery.addHandler { exportText ->
                 val trimmed = exportText.trim()
@@ -127,6 +136,9 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                                   target?.preferDiff ? "1" : ""
                                 ].join("\t");
                                 ${focusFileQuery.inject("payload")}
+                              },
+                              closeAllTabs: function() {
+                                ${closeAllTabsQuery.inject("'closeAllTabs'")}
                               }
                             };
                             """.trimIndent(),
@@ -378,6 +390,11 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                         openFile.presentableName.startsWith("Changes in ")
                 }
                 .forEach(fileEditorManager::closeFile)
+        }
+
+        private fun closeAllOpenTabs(project: Project) {
+            val fileEditorManager = FileEditorManager.getInstance(project)
+            fileEditorManager.openFiles.forEach(fileEditorManager::closeFile)
         }
 
         private fun restoreFocus(component: Component?) {

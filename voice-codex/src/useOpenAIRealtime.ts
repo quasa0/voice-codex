@@ -68,9 +68,22 @@ const IDE_FOCUS_FILE_TOOL = {
   },
 } as const;
 
+const IDE_CLEAR_TABS_TOOL = {
+  type: "function",
+  name: "close_all_tabs_in_ide",
+  description:
+    "Closes all currently open editor tabs and diff/change views in the active JetBrains IDE project. Use this when the user asks to clear the desk, clear tabs, or close all tabs/views.",
+  parameters: {
+    type: "object",
+    properties: {},
+    additionalProperties: false,
+  },
+} as const;
+
 interface UseOpenAIRealtimeOptions {
   initialMessages?: OpenAIRealtimeMessage[];
   initialLogs?: OpenAIRealtimeLogEntry[];
+  initialSpeakerMuted?: boolean;
 }
 
 export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
@@ -80,6 +93,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const [logs, setLogs] = useState<OpenAIRealtimeLogEntry[]>(() => options.initialLogs ?? []);
   const [messages, setMessages] = useState<OpenAIRealtimeMessage[]>(() => options.initialMessages ?? []);
   const [isMicMuted, setIsMicMuted] = useState(true);
+  const [isSpeakerMuted, setIsSpeakerMuted] = useState(options.initialSpeakerMuted ?? false);
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
@@ -94,6 +108,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const invalidatedHiddenResponseSeqRef = useRef(0);
   const assistantHiddenResponseSeqByItemRef = useRef<Map<string, number>>(new Map());
   const isMicMutedRef = useRef(true);
+  const isSpeakerMutedRef = useRef(options.initialSpeakerMuted ?? false);
   const assistantSpeakingTimeoutRef = useRef<number | null>(null);
   const isAssistantSpeakingRef = useRef(false);
   const pendingFunctionCallArgsRef = useRef<Map<string, string>>(new Map());
@@ -211,6 +226,21 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     };
   }, []);
 
+  const closeAllTabsInIde = useCallback(() => {
+    if (!window.IDEBridge?.closeAllTabs) {
+      return {
+        ok: false,
+        message: "IDE bridge unavailable.",
+      };
+    }
+
+    window.IDEBridge.closeAllTabs();
+    return {
+      ok: true,
+      message: "Closed all open tabs and diff views.",
+    };
+  }, []);
+
   const submitToolResult = useCallback((callId: string, output: unknown) => {
     sendClientEvent("conversation.item.create", {
       type: "conversation.item.create",
@@ -320,6 +350,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
       const audio = audioRef.current ?? new Audio();
       audio.autoplay = true;
+      audio.muted = isSpeakerMutedRef.current;
       audioRef.current = audio;
 
       pc.ontrack = (event) => {
@@ -337,7 +368,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         sendClientEvent("session.update", {
           type: "session.update",
           session: {
-            tools: [IDE_FOCUS_FILE_TOOL],
+            tools: [IDE_FOCUS_FILE_TOOL, IDE_CLEAR_TABS_TOOL],
             tool_choice: "auto",
           },
         });
@@ -520,6 +551,11 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
               const result = focusFileInIde(path);
               submitToolResult(callId, result);
             }
+
+            if (name === "close_all_tabs_in_ide" && callId) {
+              const result = closeAllTabsInIde();
+              submitToolResult(callId, result);
+            }
           }
 
           if (type === "output_audio_buffer.started") {
@@ -570,7 +606,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
       addLog("meta", "webrtc-answer", "Accepted OpenAI Realtime SDP answer");
     },
-    [addAssistantInterruptedMessage, addLog, disconnect, focusFileInIde, removePendingVoiceMessage, sendClientEvent, setAssistantSpeakingWithGrace, submitToolResult, upsertUserVoiceMessage],
+    [addAssistantInterruptedMessage, addLog, closeAllTabsInIde, disconnect, focusFileInIde, removePendingVoiceMessage, sendClientEvent, setAssistantSpeakingWithGrace, submitToolResult, upsertUserVoiceMessage],
   );
 
   const sendText = useCallback(
@@ -643,6 +679,19 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     setMicMuted(!isMicMuted);
   }, [isMicMuted, setMicMuted]);
 
+  const setSpeakerMuted = useCallback((muted: boolean) => {
+    if (audioRef.current) {
+      audioRef.current.muted = muted;
+    }
+    setIsSpeakerMuted(muted);
+    isSpeakerMutedRef.current = muted;
+    addLog("meta", muted ? "speaker-muted" : "speaker-unmuted", muted ? "Assistant audio playback muted" : "Assistant audio playback unmuted");
+  }, [addLog]);
+
+  const toggleSpeakerMuted = useCallback(() => {
+    setSpeakerMuted(!isSpeakerMutedRef.current);
+  }, [setSpeakerMuted]);
+
   const skipAssistant = useCallback(() => {
     if (isAssistantSpeakingRef.current) {
       addAssistantInterruptedMessage();
@@ -670,6 +719,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     logs,
     messages,
     isMicMuted,
+    isSpeakerMuted,
     connectedAt,
     elapsedSeconds,
     connect,
@@ -678,6 +728,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     sendText,
     setMicMuted,
     toggleMicMuted,
+    setSpeakerMuted,
+    toggleSpeakerMuted,
     isAssistantSpeaking,
     skipAssistant,
     cancelAssistantResponse,

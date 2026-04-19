@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, Copy, Mic, MicOff, PhoneOff, Play, Radio, Send, SkipForward, TerminalSquare, Trash2 } from "lucide-react";
+import { Activity, Copy, Mic, MicOff, PhoneOff, Play, Radio, Send, SkipForward, TerminalSquare, Trash2, Volume2, VolumeX } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useCodexWebSocket } from "./useCodexWebSocket";
 import { useOpenAIRealtime } from "./useOpenAIRealtime";
 import type { OpenAIRealtimeStatus } from "./useOpenAIRealtime";
+import { getActiveProjectPath, ProjectScopedStorage } from "./projectScopedStorage";
 import type { LogEntry, AgentEvent, ModelInfo, CodexMessage, CodexMessageKind, CodexSegment, CodexSegmentActivity, CodexSegmentState, CodexDiffPreview } from "./types";
 import { getCodexProjectCwd } from "./codexConfig";
 import { Badge } from "@/components/ui/badge";
@@ -78,6 +79,7 @@ const STORAGE_KEYS = {
   codexEvents: "voice-codex.codex.events",
   codexSegments: "voice-codex.codex.segments",
   reconnectIntent: "voice-codex.reconnect.intent",
+  realtimeSettings: "voice-codex.realtime.settings",
 } as const;
 
 const PERSIST_LIMITS = {
@@ -90,7 +92,7 @@ const PERSIST_LIMITS = {
 } as const;
 
 const REALTIME_CONNECT_INSTRUCTIONS =
-  `You are voice coding assistant inside an already-open software project. Project workspace already known and connected to Codex. Do not ask user for repo name, folder, project structure, or what files exist unless truly impossible. For requests about files, codebase structure, repo contents, implementation details, or inspection, default to delegating to Codex. If the user asks to show, open, reveal, or focus a file in the IDE, use the focus_file_in_ide tool instead of only describing the file. Do not claim you already queried Codex unless frontend actually dispatched Codex work. If delegation not yet confirmed, say brief handoff like "Checking Codex now." Never make up project facts, implementation details, files, components, APIs, or what Codex built. If the answer is unclear from explicit context already provided in conversation, say you need to check Codex or ask a brief clarifying question instead of guessing. Use user only for product intent, ambiguity, or preference decisions. If user asks what you remember after a refresh, answer clearly that this is a fresh voice session and you only remember messages since reload. Use Markdown when structure helps readability: headings, bullets, links, inline code, and fenced code blocks. Do not force markdown for every short reply. Speak only English unless user explicitly asks another language. Wait until user finishes speaking before replying. ${TERSE_AGENT_STYLE}`;
+  `You are voice coding assistant inside an already-open software project. Project workspace already known and connected to Codex. Do not ask user for repo name, folder, project structure, or what files exist unless truly impossible. Treat the active project path as a strict boundary: do not inspect, edit, search, or infer from parent folders, sibling folders, or adjacent repos unless the user explicitly asks to work outside the current project. If the current project seems sparse or empty, say that and ask before leaving it. For requests about files, codebase structure, repo contents, implementation details, or inspection, default to delegating to Codex. If the user asks to show, open, reveal, or focus a file in the IDE, use the focus_file_in_ide tool instead of only describing the file. Do not claim you already queried Codex unless frontend actually dispatched Codex work. If delegation not yet confirmed, say brief handoff like "Checking Codex now." Never make up project facts, implementation details, files, components, APIs, or what Codex built. If the answer is unclear from explicit context already provided in conversation, say you need to check Codex or ask a brief clarifying question instead of guessing. Use user only for product intent, ambiguity, or preference decisions. If user asks what you remember after a refresh, answer clearly that this is a fresh voice session and you only remember messages since reload. Use Markdown when structure helps readability: headings, bullets, links, inline code, and fenced code blocks. Do not force markdown for every short reply. Speak only English unless user explicitly asks another language. Wait until user finishes speaking before replying. ${TERSE_AGENT_STYLE}`;
 const PAGE_REFRESH_MARKER_LOAD_KEY = "voice-codex.realtime.page-refresh-load-id";
 const PAGE_REFRESH_MARKER_REAL_MESSAGE_KEY = "voice-codex.realtime.page-refresh-real-message-id";
 
@@ -115,6 +117,10 @@ function formatNowLocal(fractionalSecondDigits: 0 | 1 | 2 | 3 = 2) {
 
 type PersistedReconnectIntent = {
   shouldReconnectRealtime: boolean;
+};
+
+type PersistedRealtimeSettings = {
+  isSpeakerMuted: boolean;
 };
 
 function buildRealtimeConnectInstructions(messages: RealtimeMessage[]) {
@@ -175,26 +181,6 @@ function normalizePersistedRealtimeMessages(messages: RealtimeMessage[]) {
   });
 }
 
-function readStoredJson<T>(key: string, fallback: T): T {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeStoredJson<T>(key: string, value: T) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Ignore storage quota/transient errors.
-  }
-}
-
 function normalizeCodexDispatchText(text: string) {
   const trimmed = text.trim();
   if (!trimmed) return "";
@@ -246,6 +232,8 @@ function buildManagedCodexRequest(originalText: string, normalizedText: string) 
     "If the original spoken utterance is ambiguous, prefer the cleaned task.",
     `Current project path: ${projectPath}`,
     "Assume project/file/code references are relative to that project unless the user says otherwise.",
+    "Stay strictly inside the current project path. Do not inspect, edit, search, or infer from parent folders, sibling folders, or adjacent repos unless the user explicitly asks to work outside the current project.",
+    "If the current project appears sparse, empty, or insufficient, say so and ask before leaving it.",
     "Use Markdown when it helps readability, especially for headings, bullets, links, inline code, and fenced code blocks.",
     "Do not force markdown for very short plain replies.",
     "</system_context>",
@@ -267,7 +255,45 @@ type RecentCodexTaskContext = {
   latestMilestone: string | null;
   filesTouched: string[];
   codexState: CodexSegmentState;
+  blockingQuestion: string | null;
 };
+
+type RecentRealtimeIntentContext = {
+  sourceUtterance: string;
+};
+
+function formatTranscriptLine(message: RealtimeMessage) {
+  const speaker =
+    message.role === "user" ? "User" : message.role === "assistant" ? "Assistant" : "System";
+  const text = message.text.replace(/\s+/g, " ").trim().slice(0, 220);
+  return `${speaker}: ${text}`;
+}
+
+function buildRecentVisibleConversationContext(
+  messages: RealtimeMessage[],
+  excludeMessageId?: string | null,
+  limit = 14,
+) {
+  const transcript = messages
+    .filter(
+      (message) =>
+        message.status === "final" &&
+        message.text.trim() &&
+        message.id !== excludeMessageId &&
+        (message.role === "user" ||
+          message.role === "assistant" ||
+          (message.role === "system" &&
+            (message.eventKind === "start" ||
+              message.eventKind === "steer" ||
+              message.eventKind === "interrupt" ||
+              message.eventKind === "interrupted" ||
+              message.eventKind === "refreshed"))),
+    )
+    .slice(-limit)
+    .map(formatTranscriptLine);
+
+  return transcript;
+}
 
 function buildRecentCodexTaskContext(
   currentSegment: CodexSegment | null,
@@ -289,6 +315,99 @@ function buildRecentCodexTaskContext(
     latestMilestone: getSegmentFirstLine(relevantSegment.latestMilestone),
     filesTouched: [...relevantSegment.filesEdited, ...relevantSegment.filesRead].slice(-4),
     codexState: relevantSegment.codexState,
+    blockingQuestion: getSegmentFirstLine(relevantSegment.blockingQuestion),
+  };
+}
+
+function looksLikeMinimalCodexReply(text: string) {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+
+  return (
+    /^(?:ok|okay|k|kk|sure|yes|yep|yup|yeah|yah|fine|alright|sounds good|go ahead|do it|continue|proceed)$/i.test(normalized) ||
+    /^(?:no|nope|nah|not sure|idk|i don't know|whatever)$/i.test(normalized)
+  );
+}
+
+function looksLikeMetaConversationTurn(text: string) {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+
+  return (
+    /^(?:stop|stop it|cancel|interrupt|never mind|nevermind|jk|j\/k|ok jk|nooo|no+|wait no)\b/.test(normalized) ||
+    /\bwhat project\b/.test(normalized) ||
+    /\bwhat are you supposed to work on\b/.test(normalized) ||
+    /\bwhat is codex doing\b/.test(normalized) ||
+    /\btell me what codex is doing\b/.test(normalized) ||
+    /\bwhat changed\b/.test(normalized) ||
+    /\bwhat happened\b/.test(normalized) ||
+    /\bwhat was the task\b/.test(normalized) ||
+    /\bwhat did i ask\b/.test(normalized) ||
+    /\bhow are you\b/.test(normalized) ||
+    /\bwhat color\b/.test(normalized) ||
+    /\bwhat do you know\b/.test(normalized) ||
+    /\bno memory\b/.test(normalized) ||
+    /\bremember\b/.test(normalized) ||
+    /\bhistory\b/.test(normalized)
+  );
+}
+
+function looksLikeVagueCodexReferenceHandoff(text: string) {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+
+  return (
+    looksLikeMinimalCodexReply(normalized) ||
+    /^(?:can\s+u|can\s+you|could\s+u|could\s+you|pls|please)?\s*(?:do|make|apply|run|handle)\s+(?:it|that|this|the change)\b/.test(normalized) ||
+    /\bdo what i asked\b/.test(normalized) ||
+    /\bdo the change\b/.test(normalized) ||
+    /\bdo that\b/.test(normalized) ||
+    /\bmake it happen\b/.test(normalized) ||
+    /\bgo with that\b/.test(normalized) ||
+    /\bproceed with that\b/.test(normalized)
+  );
+}
+
+function looksLikeActionableRealtimeIntent(text: string) {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  if (looksLikeMinimalCodexReply(normalized)) return false;
+  if (looksLikeMetaConversationTurn(normalized)) return false;
+  if (/^(?:hi|hey|hello|yo|sup|how are you|how r you|what's up|whats up)\b/.test(normalized)) return false;
+  if (
+    normalized.includes("what is codex doing") ||
+    normalized.includes("what's codex doing") ||
+    normalized.includes("tell me what codex is doing") ||
+    normalized.includes("what changed") ||
+    normalized.includes("what happened")
+  ) {
+    return false;
+  }
+
+  return (
+    /\b(?:make|change|update|add|remove|fix|edit|write|rewrite|refactor|run|start|stop|kill|open|show|list|save|commit|push|convert|turn|set|move)\b/.test(normalized) ||
+    /\bi want\b/.test(normalized) ||
+    /\b(?:theme|style|styles|file|project|app|repo|code|folder|port|browser|build|tests?)\b/.test(normalized)
+  );
+}
+
+function buildRecentRealtimeIntentContext(
+  messages: RealtimeMessage[],
+  excludeMessageId?: string | null,
+): RecentRealtimeIntentContext | null {
+  const relevantMessage = [...messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === "user" &&
+        message.status === "final" &&
+        message.id !== excludeMessageId &&
+        looksLikeActionableRealtimeIntent(message.text),
+    );
+
+  if (!relevantMessage) return null;
+  return {
+    sourceUtterance: relevantMessage.text.trim(),
   };
 }
 
@@ -324,29 +443,90 @@ function buildManagedCodexRequestWithContext(
   originalText: string,
   normalizedText: string,
   recentTaskContext: RecentCodexTaskContext | null,
+  realtimeIntentContext: RecentRealtimeIntentContext | null,
+  visibleConversationContext: string[],
   isFollowUp: boolean,
 ) {
-  const baseRequest = buildManagedCodexRequest(originalText, normalizedText);
-  if (!recentTaskContext || !isFollowUp) return baseRequest;
+  const shouldSynthesizeFromRealtimeIntent =
+    looksLikeVagueCodexReferenceHandoff(normalizedText) &&
+    Boolean(realtimeIntentContext?.sourceUtterance) &&
+    !recentTaskContext?.blockingQuestion;
+  const effectiveNormalizedText =
+    shouldSynthesizeFromRealtimeIntent && realtimeIntentContext
+      ? `Carry out this user intent in the current project: ${realtimeIntentContext.sourceUtterance}`
+      : normalizedText;
 
-  const contextLines = [
-    "",
-    "<recent_task_context>",
-    "Treat the cleaned task as a continuation or modification of the most recent relevant Codex task below unless the user clearly changed topic.",
-    `Previous task: ${recentTaskContext.sourceUtterance}`,
-  ];
+  const baseRequest = buildManagedCodexRequest(originalText, effectiveNormalizedText);
+  if (!recentTaskContext && !realtimeIntentContext && visibleConversationContext.length === 0) return baseRequest;
 
-  if (recentTaskContext.latestOutcome) {
-    contextLines.push(`Latest outcome: ${recentTaskContext.latestOutcome}`);
-  } else if (recentTaskContext.latestMilestone) {
-    contextLines.push(`Latest milestone: ${recentTaskContext.latestMilestone}`);
+  const contextLines = [""];
+
+  if (recentTaskContext) {
+    contextLines.push(
+      "<recent_task_context>",
+      isFollowUp
+        ? "Treat the cleaned task as a continuation or modification of the most recent relevant Codex task below unless the user clearly changed topic."
+        : "Use the recent Codex task below as context when relevant, but allow a clear topic switch.",
+      `Previous task: ${recentTaskContext.sourceUtterance}`,
+    );
+
+    if (recentTaskContext.latestOutcome) {
+      contextLines.push(`Latest outcome: ${recentTaskContext.latestOutcome}`);
+    } else if (recentTaskContext.latestMilestone) {
+      contextLines.push(`Latest milestone: ${recentTaskContext.latestMilestone}`);
+    }
+
+    if (recentTaskContext.filesTouched.length > 0) {
+      contextLines.push(`Recent files touched: ${recentTaskContext.filesTouched.join(", ")}`);
+    }
+
+    contextLines.push("</recent_task_context>");
   }
 
-  if (recentTaskContext.filesTouched.length > 0) {
-    contextLines.push(`Recent files touched: ${recentTaskContext.filesTouched.join(", ")}`);
+  if (realtimeIntentContext) {
+    contextLines.push(
+      "",
+      "<recent_realtime_intent>",
+      "Realtime voice may have already inferred user intent before this Codex handoff.",
+      `Recent user intent in this conversation: ${realtimeIntentContext.sourceUtterance}`,
+      shouldSynthesizeFromRealtimeIntent
+        ? "The latest user reply is terse, so prefer carrying out that recent intent unless it clearly conflicts with newer context."
+        : "Use this only when it helps resolve vague references or continuation intent.",
+      "</recent_realtime_intent>",
+    );
   }
 
-  contextLines.push("</recent_task_context>");
+  if (visibleConversationContext.length > 0) {
+    contextLines.push(
+      "",
+      "<recent_visible_conversation>",
+      "Recent visible conversation from the UI. Use it to resolve vague references, meta follow-ups, reversals, and the user's real intent.",
+      ...visibleConversationContext,
+      "</recent_visible_conversation>",
+    );
+  }
+
+  if (recentTaskContext?.blockingQuestion) {
+    contextLines.push(
+      "",
+      "<open_clarification_context>",
+      "There is an open Codex clarification from the recent task below.",
+      `Open question: ${recentTaskContext.blockingQuestion}`,
+      `Latest user reply: ${normalizedText}`,
+      looksLikeMinimalCodexReply(normalizedText)
+        ? "The user's reply is terse. Infer the most likely intent from the open question and recent task context. If this looks like approval or acknowledgement, continue with the best reasonable default instead of restating the question."
+        : "Interpret the user's reply in the context of that open question. If it resolves the question, continue the task without re-asking.",
+      "</open_clarification_context>",
+    );
+  } else if (isFollowUp) {
+    contextLines.push(
+      "",
+      "<handoff_interpretation>",
+      "The latest user turn is likely a continuation of the recent Codex task above. Resolve vague references like \"it\", \"that\", or terse edits relative to that task when plausible.",
+      "</handoff_interpretation>",
+    );
+  }
+
   return `${baseRequest}\n${contextLines.join("\n")}`;
 }
 
@@ -457,6 +637,25 @@ function shouldForceChatOnly(text: string) {
     /\bjust\s+(?:tell|answer|say|chat)\b/.test(normalized) ||
     /\byourself\b/.test(normalized) ||
     /\bno need to use codex\b/.test(normalized)
+  );
+}
+
+function isClearDeskCommand(text: string) {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized) return false;
+  return (
+    normalized === "clear" ||
+    normalized === "clear." ||
+    normalized === "clear!" ||
+    normalized === "clear desk" ||
+    normalized === "clear the desk" ||
+    normalized === "close all tabs" ||
+    normalized === "close the tabs" ||
+    normalized === "close all file tabs" ||
+    normalized === "close all open tabs" ||
+    normalized === "close all views" ||
+    normalized === "clear all tabs" ||
+    normalized === "clear the tabs"
   );
 }
 
@@ -1843,21 +2042,36 @@ function formatTranscriptExportSection<
 }
 
 export default function App() {
+  const activeProjectPath = getActiveProjectPath() || getCodexProjectCwd();
+  const projectStorageRef = useRef(new ProjectScopedStorage(activeProjectPath));
   const persistedRealtimeMessagesRef = useRef<RealtimeMessage[]>(
     normalizePersistedRealtimeMessages(
-      readStoredJson<RealtimeMessage[]>(STORAGE_KEYS.realtimeMessages, []),
+      projectStorageRef.current.readJson<RealtimeMessage[]>(STORAGE_KEYS.realtimeMessages, []),
     ),
   );
   const persistedRealtimeLogsRef = useRef<RealtimeLog[]>(
-    readStoredJson<RealtimeLog[]>(STORAGE_KEYS.realtimeLogs, []),
+    projectStorageRef.current.readJson<RealtimeLog[]>(STORAGE_KEYS.realtimeLogs, []),
   );
-  const persistedCodexMessagesRef = useRef<CodexMessage[]>([]);
-  const persistedCodexLogRef = useRef<LogEntry[]>([]);
-  const persistedCodexEventsRef = useRef<AgentEvent[]>([]);
-  const persistedCodexSegmentsRef = useRef<CodexSegment[]>([]);
+  const persistedCodexMessagesRef = useRef<CodexMessage[]>(
+    projectStorageRef.current.readJson<CodexMessage[]>(STORAGE_KEYS.codexMessages, []),
+  );
+  const persistedCodexLogRef = useRef<LogEntry[]>(
+    projectStorageRef.current.readJson<LogEntry[]>(STORAGE_KEYS.codexLog, []),
+  );
+  const persistedCodexEventsRef = useRef<AgentEvent[]>(
+    projectStorageRef.current.readJson<AgentEvent[]>(STORAGE_KEYS.codexEvents, []),
+  );
+  const persistedCodexSegmentsRef = useRef<CodexSegment[]>(
+    projectStorageRef.current.readJson<CodexSegment[]>(STORAGE_KEYS.codexSegments, []),
+  );
   const persistedReconnectIntentRef = useRef<PersistedReconnectIntent>(
-    readStoredJson<PersistedReconnectIntent>(STORAGE_KEYS.reconnectIntent, {
+    projectStorageRef.current.readJson<PersistedReconnectIntent>(STORAGE_KEYS.reconnectIntent, {
       shouldReconnectRealtime: false,
+    }),
+  );
+  const persistedRealtimeSettingsRef = useRef<PersistedRealtimeSettings>(
+    projectStorageRef.current.readJson<PersistedRealtimeSettings>(STORAGE_KEYS.realtimeSettings, {
+      isSpeakerMuted: false,
     }),
   );
   const [wsUrl] = useState("ws://localhost:3001?target=ws://127.0.0.1:3000");
@@ -1903,6 +2117,7 @@ export default function App() {
     logs: realtimeLogs,
     messages: realtimeMessages,
     isMicMuted,
+    isSpeakerMuted,
     connectedAt: realtimeConnectedAt,
     elapsedSeconds: realtimeElapsedSeconds,
     connect: connectRealtime,
@@ -1910,12 +2125,14 @@ export default function App() {
     requestResponse: requestRealtimeResponse,
     sendText: sendRealtimeText,
     toggleMicMuted,
+    toggleSpeakerMuted,
     isAssistantSpeaking,
     skipAssistant,
     addSystemMessage: addRealtimeSystemMessage,
   } = useOpenAIRealtime({
     initialMessages: persistedRealtimeMessagesRef.current,
     initialLogs: persistedRealtimeLogsRef.current,
+    initialSpeakerMuted: persistedRealtimeSettingsRef.current.isSpeakerMuted,
   });
 
   const sdpHandlerRef = useRef<((sdp: string) => void) | null>(null);
@@ -1978,34 +2195,42 @@ export default function App() {
           .reverse()
           .find((message) => (message.role === "user" || message.role === "assistant") && message.text.trim())
           ?.id ?? null;
-      const previousMarkedRealMessageId = window.sessionStorage.getItem(PAGE_REFRESH_MARKER_REAL_MESSAGE_KEY);
+      const previousMarkedRealMessageId = projectStorageRef.current.getSessionItem(PAGE_REFRESH_MARKER_REAL_MESSAGE_KEY);
       if (latestRealMessageId && previousMarkedRealMessageId === latestRealMessageId) return;
       const loadId = String(Math.floor(window.performance.timeOrigin));
-      const previousLoadId = window.sessionStorage.getItem(PAGE_REFRESH_MARKER_LOAD_KEY);
+      const previousLoadId = projectStorageRef.current.getSessionItem(PAGE_REFRESH_MARKER_LOAD_KEY);
       if (previousLoadId === loadId) return;
-      window.sessionStorage.setItem(PAGE_REFRESH_MARKER_LOAD_KEY, loadId);
+      projectStorageRef.current.setSessionItem(PAGE_REFRESH_MARKER_LOAD_KEY, loadId);
       if (latestRealMessageId) {
-        window.sessionStorage.setItem(PAGE_REFRESH_MARKER_REAL_MESSAGE_KEY, latestRealMessageId);
+        projectStorageRef.current.setSessionItem(PAGE_REFRESH_MARKER_REAL_MESSAGE_KEY, latestRealMessageId);
       }
     }
     addRealtimeSystemMessage("page refreshed", "refreshed");
   }, [addRealtimeSystemMessage]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.removeItem(STORAGE_KEYS.codexMessages);
-    window.localStorage.removeItem(STORAGE_KEYS.codexLog);
-    window.localStorage.removeItem(STORAGE_KEYS.codexEvents);
-    window.localStorage.removeItem(STORAGE_KEYS.codexSegments);
-  }, []);
-
-  useEffect(() => {
-    writeStoredJson(STORAGE_KEYS.realtimeMessages, realtimeMessages.slice(-PERSIST_LIMITS.realtimeMessages));
+    projectStorageRef.current.writeJson(STORAGE_KEYS.realtimeMessages, realtimeMessages.slice(-PERSIST_LIMITS.realtimeMessages));
   }, [realtimeMessages]);
 
   useEffect(() => {
-    writeStoredJson(STORAGE_KEYS.realtimeLogs, realtimeLogs.slice(-PERSIST_LIMITS.realtimeLogs));
+    projectStorageRef.current.writeJson(STORAGE_KEYS.realtimeLogs, realtimeLogs.slice(-PERSIST_LIMITS.realtimeLogs));
   }, [realtimeLogs]);
+
+  useEffect(() => {
+    projectStorageRef.current.writeJson(STORAGE_KEYS.codexMessages, codexMessages.slice(-PERSIST_LIMITS.codexMessages));
+  }, [codexMessages]);
+
+  useEffect(() => {
+    projectStorageRef.current.writeJson(STORAGE_KEYS.codexLog, log.slice(-PERSIST_LIMITS.codexLog));
+  }, [log]);
+
+  useEffect(() => {
+    projectStorageRef.current.writeJson(STORAGE_KEYS.codexEvents, agentEvents.slice(-PERSIST_LIMITS.codexEvents));
+  }, [agentEvents]);
+
+  useEffect(() => {
+    projectStorageRef.current.writeJson(STORAGE_KEYS.codexSegments, segments.slice(-PERSIST_LIMITS.codexSegments));
+  }, [segments]);
 
   useEffect(() => {
     const staleTimer = window.setInterval(() => {
@@ -2060,8 +2285,16 @@ export default function App() {
       nextIntent.shouldReconnectRealtime = true;
     }
     persistedReconnectIntentRef.current = nextIntent;
-    writeStoredJson(STORAGE_KEYS.reconnectIntent, nextIntent);
+    projectStorageRef.current.writeJson(STORAGE_KEYS.reconnectIntent, nextIntent);
   }, [realtimeStatus, status]);
+
+  useEffect(() => {
+    const nextSettings = {
+      isSpeakerMuted,
+    };
+    persistedRealtimeSettingsRef.current = nextSettings;
+    projectStorageRef.current.writeJson(STORAGE_KEYS.realtimeSettings, nextSettings);
+  }, [isSpeakerMuted]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2202,7 +2435,7 @@ export default function App() {
   const handleStartRealtime = async () => {
     const nextIntent = { ...persistedReconnectIntentRef.current, shouldReconnectRealtime: true };
     persistedReconnectIntentRef.current = nextIntent;
-    writeStoredJson(STORAGE_KEYS.reconnectIntent, nextIntent);
+    projectStorageRef.current.writeJson(STORAGE_KEYS.reconnectIntent, nextIntent);
     const reconnectHistory = realtimeMessages.length > 0
       ? realtimeMessages
       : persistedRealtimeMessagesRef.current;
@@ -2228,17 +2461,17 @@ export default function App() {
     setThreadError(null);
 
     if (typeof window !== "undefined") {
-      window.localStorage.removeItem(STORAGE_KEYS.realtimeMessages);
-      window.localStorage.removeItem(STORAGE_KEYS.realtimeLogs);
-      window.localStorage.removeItem(STORAGE_KEYS.codexMessages);
-      window.localStorage.removeItem(STORAGE_KEYS.codexLog);
-      window.localStorage.removeItem(STORAGE_KEYS.codexEvents);
-      window.localStorage.removeItem(STORAGE_KEYS.codexSegments);
+      projectStorageRef.current.remove(STORAGE_KEYS.realtimeMessages);
+      projectStorageRef.current.remove(STORAGE_KEYS.realtimeLogs);
+      projectStorageRef.current.remove(STORAGE_KEYS.codexMessages);
+      projectStorageRef.current.remove(STORAGE_KEYS.codexLog);
+      projectStorageRef.current.remove(STORAGE_KEYS.codexEvents);
+      projectStorageRef.current.remove(STORAGE_KEYS.codexSegments);
     }
 
     const nextIntent = { ...persistedReconnectIntentRef.current, shouldReconnectRealtime: true };
     persistedReconnectIntentRef.current = nextIntent;
-    writeStoredJson(STORAGE_KEYS.reconnectIntent, nextIntent);
+    projectStorageRef.current.writeJson(STORAGE_KEYS.reconnectIntent, nextIntent);
 
     await connectRealtime({
       model: "gpt-realtime",
@@ -2352,10 +2585,29 @@ export default function App() {
         return;
       }
 
+      if (isClearDeskCommand(latestFinalUserMessage.text)) {
+        const closeAllTabs = window.IDEBridge?.closeAllTabs;
+        const exactReply = closeAllTabs
+          ? "Closed all open tabs and change views in the IDE."
+          : "I can't close IDE tabs right now because the IDE bridge is unavailable.";
+        if (closeAllTabs) {
+          closeAllTabs();
+        }
+        addDebugNote("relay_clear_desk", exactReply);
+        sendRealtimeText(
+          `Say exactly this to the user and nothing else:\n${exactReply}`,
+          { requestResponse: true, visible: false },
+        );
+        return;
+      }
+
       const forceCodexDispatch = shouldForceCodexDispatch(latestFinalUserMessage.text);
       const recentCodexTaskContext = buildRecentCodexTaskContext(currentSegment, segments);
+      const recentRealtimeIntentContext = buildRecentRealtimeIntentContext(realtimeMessages, latestFinalUserMessage.id);
+      const recentVisibleConversationContext = buildRecentVisibleConversationContext(realtimeMessages, latestFinalUserMessage.id);
       const continuationFollowUp =
-        Boolean(recentCodexTaskContext) && looksLikeCodexFollowUp(latestFinalUserMessage.text);
+        (Boolean(recentCodexTaskContext) || Boolean(recentRealtimeIntentContext)) &&
+        (looksLikeCodexFollowUp(latestFinalUserMessage.text) || looksLikeVagueCodexReferenceHandoff(latestFinalUserMessage.text));
       let routed = routeCacheRef.current.get(latestFinalUserMessage.id);
       if (!routed && !forceCodexDispatch && !forceChatOnly) {
         routed = await routeIntent(latestFinalUserMessage.text, currentCodexState === "running" || currentCodexState === "waiting_for_user");
@@ -2479,6 +2731,8 @@ export default function App() {
         latestFinalUserMessage.text,
         visibleCodexRequest,
         recentCodexTaskContext,
+        recentRealtimeIntentContext,
+        recentVisibleConversationContext,
         continuationFollowUp,
       );
       addDebugNote(
@@ -2857,7 +3111,7 @@ export default function App() {
                               onClick={() => {
                                 const nextIntent = { ...persistedReconnectIntentRef.current, shouldReconnectRealtime: false };
                                 persistedReconnectIntentRef.current = nextIntent;
-                                writeStoredJson(STORAGE_KEYS.reconnectIntent, nextIntent);
+                                projectStorageRef.current.writeJson(STORAGE_KEYS.reconnectIntent, nextIntent);
                                 disconnectRealtime();
                               }}
                               title="End call"
@@ -2872,19 +3126,34 @@ export default function App() {
 
                     <PaneComposerRow
                       leading={
-                        <button
-                          type="button"
-                          className={`flex size-7.5 shrink-0 items-center justify-center rounded-md border transition ${
-                            !isMicMuted && realtimeCanType
-                              ? "border-[#c4e5d1] bg-[#e2f5ea] text-[#1e6b3f] shadow-[0_0_0_3px_rgba(47,168,96,0.18)]"
-                              : "border-[#d3d7dc] bg-[#f7f8fa] text-[#9aa1ab]"
-                          }`}
-                          onClick={toggleMicMuted}
-                          disabled={!realtimeCanType}
-                          title={isMicMuted ? "Unmute Mic" : "Mute Mic"}
-                        >
-                          {isMicMuted ? <MicOff className="size-4.5" /> : <Mic className="size-4.5" />}
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            className={`flex size-7.5 shrink-0 items-center justify-center rounded-md border transition ${
+                              !isMicMuted && realtimeCanType
+                                ? "border-[#c4e5d1] bg-[#e2f5ea] text-[#1e6b3f] shadow-[0_0_0_3px_rgba(47,168,96,0.18)]"
+                                : "border-[#d3d7dc] bg-[#f7f8fa] text-[#9aa1ab]"
+                            }`}
+                            onClick={toggleMicMuted}
+                            disabled={!realtimeCanType}
+                            title={isMicMuted ? "Unmute Mic" : "Mute Mic"}
+                          >
+                            {isMicMuted ? <MicOff className="size-4.5" /> : <Mic className="size-4.5" />}
+                          </button>
+                          <button
+                            type="button"
+                            className={`flex size-7.5 shrink-0 items-center justify-center rounded-md border transition ${
+                              !isSpeakerMuted && realtimeCanType
+                                ? "border-[#c4e5d1] bg-[#eef8f2] text-[#1e6b3f]"
+                                : "border-[#d3d7dc] bg-[#f7f8fa] text-[#9aa1ab]"
+                            }`}
+                            onClick={toggleSpeakerMuted}
+                            disabled={!realtimeCanType}
+                            title={isSpeakerMuted ? "Unmute AI Voice" : "Mute AI Voice"}
+                          >
+                            {isSpeakerMuted ? <VolumeX className="size-4.5" /> : <Volume2 className="size-4.5" />}
+                          </button>
+                        </div>
                       }
                       input={
                         <input
