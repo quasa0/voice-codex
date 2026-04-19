@@ -368,7 +368,7 @@ function CodexConversationPanel({ messages }: { messages: CodexMessage[] }) {
             messages.map((message) => (
               <div
                 key={message.id}
-                className={`border-b border-white/6 py-2 ${
+                className={`py-2 ${
                   message.role === "assistant"
                     ? "text-left"
                     : message.role === "system"
@@ -426,7 +426,7 @@ function ConversationPanel({ messages }: { messages: RealtimeMessage[] }) {
             messages.map((message) => (
               <div
                 key={message.id}
-                className={`border-b border-white/6 py-2 ${
+                className={`py-2 ${
                   message.role === "assistant"
                     ? "text-left"
                     : message.role === "system"
@@ -776,6 +776,17 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    if (!pendingCodexNarrationRef.current) return;
+    if (pendingCodexNarrationRef.current.turnId) return;
+    if (!activeTurnId) return;
+
+    pendingCodexNarrationRef.current = {
+      ...pendingCodexNarrationRef.current,
+      turnId: activeTurnId,
+    };
+  }, [activeTurnId]);
+
+  useEffect(() => {
     if (activeTurnStatus !== "idle" || !thread || !queuedInterruptReplacementRef.current) return;
 
     const replacement = queuedInterruptReplacementRef.current;
@@ -794,14 +805,19 @@ export default function App() {
     if (queuedInterruptReplacementRef.current) return;
     if (!pendingCodexNarrationRef.current) return;
 
+    const pending = pendingCodexNarrationRef.current;
     const latestCodexReply = [...codexMessages]
       .reverse()
-      .find((message) => message.role === "assistant" && message.status === "final");
+      .find(
+        (message) =>
+          message.role === "assistant" &&
+          message.status === "final" &&
+          (!pending.turnId || message.turnId === pending.turnId),
+      );
 
     if (!latestCodexReply) return;
     if (lastNarratedCodexMessageIdRef.current === latestCodexReply.id) return;
 
-    const pending = pendingCodexNarrationRef.current;
     pendingCodexNarrationRef.current = null;
     lastNarratedCodexMessageIdRef.current = latestCodexReply.id;
 

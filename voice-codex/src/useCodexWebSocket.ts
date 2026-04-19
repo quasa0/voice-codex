@@ -66,6 +66,15 @@ function summarizeEvent(method: string, params: unknown): string {
   return method;
 }
 
+function getEventTurnId(params: unknown): string | null {
+  const record = params as { turnId?: unknown; turn?: { id?: unknown } } | undefined;
+  const direct = record?.turnId;
+  if (typeof direct === "string" && direct.trim()) return direct;
+  const nested = record?.turn?.id;
+  if (typeof nested === "string" && nested.trim()) return nested;
+  return null;
+}
+
 export function useCodexWebSocket() {
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
   const [log, setLog] = useState<LogEntry[]>([]);
@@ -278,6 +287,7 @@ export function useCodexWebSocket() {
 
       if (method === "turn/completed") {
         const turn = (params as { turn?: { status?: string; error?: { message?: string } } })?.turn;
+        const turnId = getEventTurnId(params);
         setActiveTurnStatus(turn?.status === "failed" ? "error" : "idle");
         setActiveTurnId(null);
         const errorMessage = turn?.error?.message;
@@ -288,21 +298,25 @@ export function useCodexWebSocket() {
             text: `Turn failed: ${errorMessage}`,
             status: "final",
             timestamp: nowTime(),
+            turnId,
           });
         }
       }
 
       if (method === "turn/plan/updated") {
+        const turnId = getEventTurnId(params);
         appendCodexMessage({
           id: `plan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           role: "assistant",
           text: summarizePlanUpdate(params),
           status: "final",
           timestamp: nowTime(),
+          turnId,
         });
       }
 
       if (method === "item/started") {
+        const turnId = getEventTurnId(params);
         const item = (params as { item?: Record<string, unknown> })?.item;
         if (item?.type === "agentMessage") {
           const itemId = String(item.id ?? `assistant-${Date.now()}`);
@@ -313,6 +327,7 @@ export function useCodexWebSocket() {
             text: "",
             status: "streaming",
             timestamp: nowTime(),
+            turnId,
           });
         }
 
@@ -326,12 +341,14 @@ export function useCodexWebSocket() {
             text: summarizeCommandLabel(item),
             status: "streaming",
             timestamp: nowTime(),
+            turnId,
           });
         }
       }
 
       if (method === "item/agentMessage/delta") {
         const p = params as Record<string, unknown>;
+        const turnId = getEventTurnId(params);
         const itemId = String(p.itemId ?? p.item_id ?? p.id ?? "");
         const delta = String(p.delta ?? "");
         if (itemId && delta) {
@@ -352,6 +369,7 @@ export function useCodexWebSocket() {
                 text: delta,
                 status: "streaming",
                 timestamp: nowTime(),
+                turnId,
               },
             ];
           });
@@ -359,6 +377,7 @@ export function useCodexWebSocket() {
       }
 
       if (method === "item/completed") {
+        const turnId = getEventTurnId(params);
         const item = (params as { item?: Record<string, unknown> })?.item;
         if (item?.type === "agentMessage") {
           const itemId = String(item.id ?? "");
@@ -372,7 +391,7 @@ export function useCodexWebSocket() {
             setCodexMessages((prev) =>
               prev.map((message) =>
                 message.id === targetId
-                  ? { ...message, text: text || message.text, status: "final" }
+                  ? { ...message, text: text || message.text, status: "final", turnId: message.turnId ?? turnId }
                   : message,
               ),
             );
@@ -389,6 +408,7 @@ export function useCodexWebSocket() {
               text: summarizeCommandResult(item),
               status: "final",
               timestamp: nowTime(),
+              turnId,
             });
             progressMessageIdByItemRef.current.delete(itemId);
           }
