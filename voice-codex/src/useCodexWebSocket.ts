@@ -13,6 +13,7 @@ import type {
   CodexSegmentActivityKind,
   CodexRelayState,
   CodexSegmentMode,
+  CodexDiffPreview,
 } from "./types";
 import {
   CODEX_APPROVAL_POLICY,
@@ -244,9 +245,30 @@ function extractEditedPath(item: Record<string, unknown>) {
     item.targetPath,
     item.relativePath,
     item.uri,
+    (item.file as Record<string, unknown> | undefined)?.path,
+    (item.file as Record<string, unknown> | undefined)?.filePath,
+    (item.change as Record<string, unknown> | undefined)?.path,
+    (item.change as Record<string, unknown> | undefined)?.filePath,
+    ((item.changes as Array<Record<string, unknown>> | undefined)?.[0])?.path,
+    ((item.changes as Array<Record<string, unknown>> | undefined)?.[0])?.filePath,
+    ((item.edits as Array<Record<string, unknown>> | undefined)?.[0])?.path,
+    ((item.edits as Array<Record<string, unknown>> | undefined)?.[0])?.filePath,
   ].find((value) => typeof value === "string" && value.trim());
-  if (typeof pathCandidate !== "string") return null;
-  const normalized = pathCandidate.trim();
+  if (typeof pathCandidate === "string") {
+    const normalized = trimWrappedQuotes(pathCandidate.trim());
+    const segments = normalized.split("/").filter(Boolean);
+    return segments.slice(-2).join("/") || normalized;
+  }
+
+  const patchText = String(item.patch ?? item.diff ?? item.unifiedDiff ?? item.output ?? item.summary ?? item.description ?? "");
+  const patchPathMatch =
+    patchText.match(/^\+\+\+\s+b\/([^\n]+)/m) ??
+    patchText.match(/^---\s+a\/([^\n]+)/m) ??
+    patchText.match(/^\*\*\*\s+Update File:\s+([^\n]+)/m) ??
+    patchText.match(/^\*\*\*\s+Add File:\s+([^\n]+)/m) ??
+    patchText.match(/(?:^|\n)M\s+([^\n]+)/m);
+  if (!patchPathMatch?.[1]) return null;
+  const normalized = trimWrappedQuotes(patchPathMatch[1].trim());
   const segments = normalized.split("/").filter(Boolean);
   return segments.slice(-2).join("/") || normalized;
 }
@@ -338,6 +360,107 @@ function extractFileChangeLineRange(item: Record<string, unknown>): { lineStart?
   return extractPatchLineRange(
     String(item.patch ?? item.diff ?? item.unifiedDiff ?? item.output ?? item.summary ?? item.description ?? ""),
   );
+}
+
+function extractDiffPreview(item: Record<string, unknown>, fallbackPatchText?: string | null): CodexDiffPreview | null {
+  const primaryPatchText =
+    (typeof item.patch === "string" && item.patch.trim() ? item.patch : null) ??
+    (typeof item.diff === "string" && item.diff.trim() ? item.diff : null) ??
+    (typeof item.unifiedDiff === "string" && item.unifiedDiff.trim() ? item.unifiedDiff : null) ??
+    (typeof fallbackPatchText === "string" && fallbackPatchText.trim() ? fallbackPatchText : null) ??
+    (typeof item.output === "string" && item.output.trim() ? item.output : null) ??
+    (typeof item.summary === "string" && item.summary.trim() ? item.summary : null) ??
+    (typeof item.description === "string" && item.description.trim() ? item.description : null) ??
+    "";
+  const patchText = String(primaryPatchText);
+  if (!patchText.trim()) return null;
+
+  const filePath = extractEditedPath(item);
+  const lines = patchText.split("\n");
+  const previewLines: CodexDiffPreview["lines"] = [];
+  let additions = 0;
+  let removals = 0;
+  let truncated = false;
+
+  for (const rawLine of lines) {
+    if (rawLine.startsWith("+++ ") || rawLine.startsWith("--- ") || rawLine.startsWith("@@")) continue;
+
+    if (rawLine.startsWith("+")) {
+      if (additions < 5) {
+        previewLines.push({ kind: "add", text: rawLine.slice(1) });
+      } else {
+        truncated = true;
+      }
+      additions += 1;
+      continue;
+    }
+
+    if (rawLine.startsWith("-")) {
+      if (removals < 5) {
+        previewLines.push({ kind: "remove", text: rawLine.slice(1) });
+      } else {
+        truncated = true;
+      }
+      removals += 1;
+    }
+  }
+
+  if (previewLines.length === 0) return null;
+
+  return {
+    filePath,
+    lines: previewLines,
+    additions,
+    removals,
+    truncated,
+  };
+}
+
+function estimateFileChangeCounts(item: Record<string, unknown>, diffPreview: CodexDiffPreview | null) {
+  const additions =
+    typeof diffPreview?.additions === "number" && diffPreview.additions > 0 ? diffPreview.additions : null;
+  const removals =
+    typeof diffPreview?.removals === "number" && diffPreview.removals > 0 ? diffPreview.removals : null;
+  if (additions || removals) {
+    return { additions, removals };
+  }
+
+  const range = extractFileChangeLineRange(item);
+  if (!range?.lineStart || !range?.lineEnd) {
+    return { additions: null, removals: null };
+  }
+
+  const changedLineCount = Math.max(1, range.lineEnd - range.lineStart + 1);
+  return {
+    additions: changedLineCount,
+    removals: changedLineCount,
+  };
+}
+
+function summarizeFileChangeMessage(
+  item: Record<string, unknown>,
+  filePath: string | null | undefined,
+  diffPreview: CodexDiffPreview | null,
+) {
+  const resolvedPath = filePath ?? diffPreview?.filePath ?? null;
+  const counts = estimateFileChangeCounts(item, diffPreview);
+  const stats = [
+    typeof counts.additions === "number" && counts.additions > 0 ? `+${counts.additions}` : null,
+    typeof counts.removals === "number" && counts.removals > 0 ? `-${counts.removals}` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  if (resolvedPath && stats) {
+    return `Updated ${resolvedPath} (${stats})`;
+  }
+  if (resolvedPath) {
+    return `Updated ${resolvedPath}`;
+  }
+  if (stats) {
+    return `Updated files (${stats})`;
+  }
+  return "Updated files";
 }
 
 function summarizeCommandLabel(item: Record<string, unknown>) {
@@ -433,6 +556,7 @@ export function useCodexWebSocket(options: UseCodexWebSocketOptions = {}) {
   const logIdRef = useRef(0);
   const assistantMessageIdByItemRef = useRef<Map<string, string>>(new Map());
   const progressMessageIdByItemRef = useRef<Map<string, string>>(new Map());
+  const fileChangeDeltaByItemRef = useRef<Map<string, string>>(new Map());
   const turnSegmentIdRef = useRef<Map<string, string>>(new Map());
   const pendingNextTurnSegmentIdRef = useRef<string | null>(null);
   const activeSegmentIdRef = useRef<string | null>(null);
@@ -1051,6 +1175,13 @@ export function useCodexWebSocket(options: UseCodexWebSocketOptions = {}) {
 
       if (method === "item/fileChange/outputDelta") {
         segmentId = resolveSegmentId(turnId);
+        const p = params as Record<string, unknown>;
+        const itemId = String(p.itemId ?? p.item_id ?? p.id ?? "");
+        const delta = String(p.delta ?? p.outputDelta ?? p.patch ?? p.diff ?? "");
+        if (itemId && delta) {
+          const existing = fileChangeDeltaByItemRef.current.get(itemId) ?? "";
+          fileChangeDeltaByItemRef.current.set(itemId, `${existing}${delta}`);
+        }
       }
 
       if (method === "item/completed") {
@@ -1107,15 +1238,21 @@ export function useCodexWebSocket(options: UseCodexWebSocketOptions = {}) {
         if (item?.type === "fileChange") {
           noteSegmentFileChange(segmentId, item);
           const editedPath = extractEditedPath(item);
+          const itemId = String(item.id ?? "");
+          const diffPreview = extractDiffPreview(item, itemId ? fileChangeDeltaByItemRef.current.get(itemId) ?? null : null);
+          if (itemId) {
+            fileChangeDeltaByItemRef.current.delete(itemId);
+          }
           appendCodexMessage({
             id: `file-change-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             role: "assistant",
-            text: editedPath ? `Updated ${editedPath}` : "Updated files",
+            text: summarizeFileChangeMessage(item, editedPath, diffPreview),
             status: "final",
             timestamp: nowTime(),
             kind: "edit",
             turnId,
             segmentId: segmentId ?? null,
+            diffPreview,
           });
         }
       }

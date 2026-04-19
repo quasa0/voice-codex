@@ -1,139 +1,57 @@
-# Voice Codex: Next-Step Plan
+# Voice Codex: Final Hackathon TODO
 
-Saved on 2026-04-18 after reviewing the current prototype against the original hackathon vision.
+Saved on 2026-04-19.
 
-## Original Vision
+## Current State
 
-The intended product is:
+The core demo path is working:
 
-- the user talks only to OpenAI Realtime
-- Realtime acts as planner/orchestrator
-- Codex app-server acts as worker
-- the frontend keeps both systems in sync
-- the user always understands:
-  - what Codex is doing
-  - whether a new utterance started, steered, or interrupted work
-  - when Codex needs input
-  - when work is actually done
+- voice-first orchestration through OpenAI Realtime
+- Codex running as the coding worker
+- visible Codex progress and completion summaries
+- JetBrains/WebStorm embedding
+- IDE diff opening for Codex edits
 
-## Current Read
+At this point, the remaining work is polish on the Codex conversation panel, not product expansion.
 
-The prototype is already beyond "can this work?" and is now mainly limited by orchestration quality and state consistency.
+## Only Remaining TODOs
 
-The biggest remaining risk is not UI polish. It is the gap between:
+### 1. Proper Markdown Rendering In Codex Chat
 
-- what Codex is actually doing
-- what the Realtime layer believes is happening
-- what the user hears
+Codex messages should render as real markdown in the conversation panel, including:
 
-## Priorities
+- headings (`#`, `##`)
+- lists
+- links
+- bold
+- inline code
+- code fences
 
-### 1. Make the orchestration state machine explicit
+This should apply while messages are streaming, not only after the final message lands.
 
-Move from implicit heuristics to a real per-segment model.
+### 2. Inline Diff Preview For `Updated files`
 
-Each Codex segment should explicitly track:
+When Codex emits an edit/update message, show a small inline diff preview directly in the Codex chat.
 
-- `segmentId`
-- source utterance
-- mode: `start | steer | interrupt`
-- Codex state: `running | waiting_for_user | completed | failed`
-- relay state: `not_spoken | progress_spoken | clarification_spoken | completion_spoken`
+Target behavior:
 
-This should become the single source of truth for relay behavior.
+- green additions
+- red deletions
+- capped preview size
+- roughly 5 added lines max
+- roughly 5 removed lines max
+- truncate anything beyond that
 
-### 2. Make Codex state first-class
+This should be sourced from structured file-change data, not scraped back out of prose summaries.
 
-The UI and relay logic should derive a compact real state:
+## Demo Goal
 
-- `idle`
-- `running`
-- `waiting_for_user`
-- `completed`
-- `failed`
+Ship the current system with:
 
-These should not depend on ad hoc inspection of only the latest message.
+1. natural voice request
+2. Codex background execution
+3. visible progress
+4. IDE-native diff visibility
+5. polished Codex chat rendering
 
-### 3. Lock down speaking policy
-
-Default policy:
-
-- On `start`: brief acknowledgement only
-- On `steer`: brief acknowledgement only
-- On `interrupt`: brief acknowledgement only
-- During long runs: only speak progress if the user asks
-- If Codex asks a real question: relay it immediately
-- On completion: short summary plus short follow-up
-- Never auto-speak raw command output or raw plan dumps
-
-### 4. Add an in-chat working indicator
-
-The header badge is not enough.
-
-Inside the conversation timeline, show a transient current-work line tied to the active segment, such as:
-
-- `working...`
-- `reading files...`
-- `editing index.html...`
-- `waiting for input...`
-
-This should update or disappear once the final result lands.
-
-### 5. Make "what happened?" answers timeline-based
-
-Questions like:
-
-- "what is it doing?"
-- "why did it do that?"
-- "did it interrupt?"
-- "what changed?"
-
-should be answered from a structured summary of the current segment timeline, not from whichever assistant message happened most recently.
-
-Recommended segment summary fields:
-
-- files read
-- files edited
-- commands run
-- latest milestone
-- blocking question
-- final outcome
-
-## What Not To Spend Time On Right Now
-
-Avoid major effort on:
-
-- tiny conversation-layout polish
-- prompt-only edge-case patching
-- more panels or dashboard surfaces
-- open-ended general chat improvements
-- non-essential visual flourishes
-
-Those are lower leverage than making the orchestration deterministic.
-
-## Demo Win Condition
-
-The strongest hackathon demo is:
-
-1. User speaks naturally.
-2. Realtime decides whether to answer or delegate.
-3. Codex visibly works in the background.
-4. User changes direction mid-flight.
-5. The system clearly shows `steer` or `interrupt`.
-6. Codex adapts without chaos.
-7. Realtime gives the right spoken summary at the right time.
-8. No invented facts and no confusing stale replies.
-
-## Immediate Next Implementation Steps
-
-If continuing development, do these next:
-
-1. Implement the explicit segment/state model in the frontend.
-2. Add in-chat active working indicators for the current Codex segment.
-3. Replace ad hoc relay behavior with segment-derived summaries for:
-   - progress
-   - clarification
-   - completion
-   - "why/what happened" questions
-
-If these three are solid, the original vision is demo-ready enough to present confidently.
+That is enough.

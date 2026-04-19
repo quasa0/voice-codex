@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, Copy, Mic, MicOff, PhoneOff, Play, Radio, Send, SkipForward, TerminalSquare, Trash2 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useCodexWebSocket } from "./useCodexWebSocket";
 import { useOpenAIRealtime } from "./useOpenAIRealtime";
 import type { OpenAIRealtimeStatus } from "./useOpenAIRealtime";
-import type { LogEntry, AgentEvent, ModelInfo, CodexMessage, CodexMessageKind, CodexSegment, CodexSegmentActivity, CodexSegmentState } from "./types";
+import type { LogEntry, AgentEvent, ModelInfo, CodexMessage, CodexMessageKind, CodexSegment, CodexSegmentActivity, CodexSegmentState, CodexDiffPreview } from "./types";
 import { getCodexProjectCwd } from "./codexConfig";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -88,7 +90,7 @@ const PERSIST_LIMITS = {
 } as const;
 
 const REALTIME_CONNECT_INSTRUCTIONS =
-  `You are voice coding assistant inside an already-open software project. Project workspace already known and connected to Codex. Do not ask user for repo name, folder, project structure, or what files exist unless truly impossible. For requests about files, codebase structure, repo contents, implementation details, or inspection, default to delegating to Codex. If the user asks to show, open, reveal, or focus a file in the IDE, use the focus_file_in_ide tool instead of only describing the file. Do not claim you already queried Codex unless frontend actually dispatched Codex work. If delegation not yet confirmed, say brief handoff like "Checking Codex now." Never make up project facts, implementation details, files, components, APIs, or what Codex built. If the answer is unclear from explicit context already provided in conversation, say you need to check Codex or ask a brief clarifying question instead of guessing. Use user only for product intent, ambiguity, or preference decisions. If user asks what you remember after a refresh, answer clearly that this is a fresh voice session and you only remember messages since reload. Speak only English unless user explicitly asks another language. Wait until user finishes speaking before replying. ${TERSE_AGENT_STYLE}`;
+  `You are voice coding assistant inside an already-open software project. Project workspace already known and connected to Codex. Do not ask user for repo name, folder, project structure, or what files exist unless truly impossible. For requests about files, codebase structure, repo contents, implementation details, or inspection, default to delegating to Codex. If the user asks to show, open, reveal, or focus a file in the IDE, use the focus_file_in_ide tool instead of only describing the file. Do not claim you already queried Codex unless frontend actually dispatched Codex work. If delegation not yet confirmed, say brief handoff like "Checking Codex now." Never make up project facts, implementation details, files, components, APIs, or what Codex built. If the answer is unclear from explicit context already provided in conversation, say you need to check Codex or ask a brief clarifying question instead of guessing. Use user only for product intent, ambiguity, or preference decisions. If user asks what you remember after a refresh, answer clearly that this is a fresh voice session and you only remember messages since reload. Use Markdown when structure helps readability: headings, bullets, links, inline code, and fenced code blocks. Do not force markdown for every short reply. Speak only English unless user explicitly asks another language. Wait until user finishes speaking before replying. ${TERSE_AGENT_STYLE}`;
 const PAGE_REFRESH_MARKER_LOAD_KEY = "voice-codex.realtime.page-refresh-load-id";
 const PAGE_REFRESH_MARKER_REAL_MESSAGE_KEY = "voice-codex.realtime.page-refresh-real-message-id";
 
@@ -242,6 +244,8 @@ function buildManagedCodexRequest(originalText: string, normalizedText: string) 
     "If the original spoken utterance is ambiguous, prefer the cleaned task.",
     `Current project path: ${projectPath}`,
     "Assume project/file/code references are relative to that project unless the user says otherwise.",
+    "Use Markdown when it helps readability, especially for headings, bullets, links, inline code, and fenced code blocks.",
+    "Do not force markdown for very short plain replies.",
     "</system_context>",
     "",
     "<original_spoken_utterance>",
@@ -1555,14 +1559,34 @@ function CodexConversationPanel({
                         )
                       ) : null}
                     </div>
-                    <div
-                      className="whitespace-pre-wrap text-[13.5px] leading-[1.6] text-[#1f2328]"
-                    >
-                      {message.text || "..."}
-                      {message.role === "assistant" && message.status === "streaming" ? (
-                        <span className="ml-1 inline-block h-[14px] w-[6px] animate-pulse align-[-2px] rounded-sm bg-[#2fa860]" />
-                      ) : null}
-                    </div>
+                    {message.role === "assistant" && message.diffPreview ? (
+                      <div className="mt-0.5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,360px)] lg:items-start">
+                        <div className="min-w-0 whitespace-pre-wrap text-[13.5px] leading-[1.6] text-[#1f2328]">
+                          {message.kind === "edit" ? (
+                            <CodexEditSummary text={message.text || "..."} diffPreview={message.diffPreview} />
+                          ) : (
+                            <MessageMarkdown text={message.text || "..."} />
+                          )}
+                          {message.status === "streaming" ? (
+                            <span className="ml-1 inline-block h-[14px] w-[6px] animate-pulse align-[-2px] rounded-sm bg-[#2fa860]" />
+                          ) : null}
+                        </div>
+                        <div className="min-w-0">
+                          <CodexDiffPreviewBlock diffPreview={message.diffPreview} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="whitespace-pre-wrap text-[13.5px] leading-[1.6] text-[#1f2328]">
+                        {message.kind === "edit" ? (
+                          <CodexEditSummary text={message.text || "..."} diffPreview={message.diffPreview ?? null} />
+                        ) : (
+                          <MessageMarkdown text={message.text || "..."} />
+                        )}
+                        {message.role === "assistant" && message.status === "streaming" ? (
+                          <span className="ml-1 inline-block h-[14px] w-[6px] animate-pulse align-[-2px] rounded-sm bg-[#2fa860]" />
+                        ) : null}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -1573,6 +1597,137 @@ function CodexConversationPanel({
     </div>
   );
 }
+
+function MessageMarkdown({ text }: { text: string }) {
+  return (
+    <div className="codex-markdown space-y-2">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: ({ children }) => <h1 className="mb-2 text-[19px] font-semibold leading-[1.25] text-[#111418] last:mb-0">{children}</h1>,
+          h2: ({ children }) => <h2 className="mb-2 text-[16px] font-semibold leading-[1.3] text-[#111418] last:mb-0">{children}</h2>,
+          h3: ({ children }) => <h3 className="mb-2 text-[14px] font-semibold leading-[1.35] text-[#111418] last:mb-0">{children}</h3>,
+          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+          ul: ({ children }) => <ul className="mb-2 list-disc space-y-1 pl-5 last:mb-0">{children}</ul>,
+          ol: ({ children }) => <ol className="mb-2 list-decimal space-y-1 pl-5 last:mb-0">{children}</ol>,
+          li: ({ children }) => <li>{children}</li>,
+          code(props) {
+            const { children, className } = props;
+            const inline = !className;
+            return inline ? (
+              <code className="rounded bg-white/70 px-1 py-[1px] font-mono text-[12px] text-[#37414b]">{children}</code>
+            ) : (
+              <code className="block overflow-x-auto rounded-md bg-[#e9ebef] p-2 font-mono text-[12px] text-[#37414b]">
+                {children}
+              </code>
+            );
+          },
+          pre: ({ children }) => <pre className="mb-2 last:mb-0">{children}</pre>,
+          a: ({ href, children }) => (
+            <a href={href} className="text-[#1d5fbf] underline underline-offset-2" target="_blank" rel="noreferrer">
+              {children}
+            </a>
+          ),
+          strong: ({ children }) => <strong className="font-semibold text-[#111418]">{children}</strong>,
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function CodexEditSummary({ text, diffPreview }: { text: string; diffPreview?: CodexDiffPreview | null }) {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const editLines = lines.filter((line) => /^updated\b/i.test(line));
+  const otherLines = lines.filter((line) => !/^updated\b/i.test(line));
+
+  if (editLines.length === 0) {
+    return <MessageMarkdown text={text} />;
+  }
+
+  const parsed = editLines.map((line, index) => {
+    const match = line.match(/^updated\s+(.+?)(?:\s+\(([^)]*)\))?$/i);
+    const rawPath = match?.[1]?.trim() ?? line.replace(/^updated\s+/i, "").trim();
+    const statText = match?.[2]?.trim() ?? "";
+    const additionMatch = statText.match(/\+(\d+)/);
+    const removalMatch = statText.match(/-(\d+)/);
+    const additions =
+      additionMatch ? Number.parseInt(additionMatch[1] ?? "0", 10) : index === 0 ? diffPreview?.additions : undefined;
+    const removals =
+      removalMatch ? Number.parseInt(removalMatch[1] ?? "0", 10) : index === 0 ? diffPreview?.removals : undefined;
+    return {
+      path: rawPath,
+      additions: typeof additions === "number" && Number.isFinite(additions) && additions > 0 ? additions : null,
+      removals: typeof removals === "number" && Number.isFinite(removals) && removals > 0 ? removals : null,
+    };
+  });
+
+  const listClassName = parsed.length > 1 ? "space-y-2" : "space-y-0";
+
+  return (
+    <div className="space-y-2">
+      <div className={listClassName}>
+        {parsed.map((entry) => (
+          <div key={`${entry.path}-${entry.additions ?? 0}-${entry.removals ?? 0}`} className="flex flex-wrap items-center gap-2">
+            <span className="text-[#111418]">Updated</span>
+            <code className="rounded bg-white/70 px-1.5 py-[1px] font-mono text-[12px] text-[#37414b]">{entry.path}</code>
+            {entry.additions ? (
+              <span className="rounded-full border border-[#bfe6cb] bg-[#eef9f1] px-1.5 py-[2px] text-[10px] font-medium leading-none text-[#1e6b3f]">
+                +{entry.additions}
+              </span>
+            ) : null}
+            {entry.removals ? (
+              <span className="rounded-full border border-[#f0c7c7] bg-[#fff1f1] px-1.5 py-[2px] text-[10px] font-medium leading-none text-[#9b2f2f]">
+                -{entry.removals}
+              </span>
+            ) : null}
+          </div>
+        ))}
+      </div>
+      {otherLines.length > 0 ? <MessageMarkdown text={otherLines.join("\n")} /> : null}
+    </div>
+  );
+}
+
+function CodexDiffPreviewBlock({ diffPreview }: { diffPreview: CodexDiffPreview }) {
+  const statLabel = [
+    typeof diffPreview.additions === "number" && diffPreview.additions > 0 ? `+${diffPreview.additions}` : null,
+    typeof diffPreview.removals === "number" && diffPreview.removals > 0 ? `-${diffPreview.removals}` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <div className="mt-2 overflow-hidden rounded-md border border-[#dfe3e8] bg-white">
+      <div className="flex items-center justify-between gap-3 border-b border-[#e7eaee] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[#8a9099]">
+        <span>{diffPreview.filePath ? `Diff Preview · ${diffPreview.filePath}` : "Diff Preview"}</span>
+        {statLabel ? <span className="shrink-0 text-[#6f7781]">{statLabel}</span> : null}
+      </div>
+      <div className="font-mono text-[12px] leading-5">
+        {diffPreview.lines.map((line, index) => (
+          <div
+            key={`${line.kind}-${index}-${line.text}`}
+            className={`flex gap-2 px-2 py-0.5 ${
+              line.kind === "add"
+                ? "bg-[#eef9f1] text-[#1e6b3f]"
+                : "bg-[#fff1f1] text-[#9b2f2f]"
+            }`}
+          >
+            <span className="shrink-0 font-semibold">{line.kind === "add" ? "+" : "-"}</span>
+            <span className="min-w-0 whitespace-pre-wrap break-words">{line.text || " "}</span>
+          </div>
+        ))}
+        {diffPreview.truncated ? (
+          <div className="px-2 py-1 text-[11px] text-[#8a9099]">…more diff lines hidden</div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 
 function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -1635,7 +1790,7 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
                     <div
                       className="whitespace-pre-wrap text-[13.5px] leading-[1.6] text-[#1f2328]"
                     >
-                      {message.text || "..."}
+                      <MessageMarkdown text={message.text || "..."} />
                       {message.role === "assistant" && message.status === "streaming" ? (
                         <span className="ml-1 inline-block h-[14px] w-[6px] animate-pulse align-[-2px] rounded-sm bg-[#2fa860]" />
                       ) : null}

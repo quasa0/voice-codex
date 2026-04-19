@@ -70,6 +70,19 @@ export interface CodexSegmentActivity {
   timestamp: string;
 }
 
+export interface CodexDiffPreviewLine {
+  kind: "add" | "remove";
+  text: string;
+}
+
+export interface CodexDiffPreview {
+  filePath?: string | null;
+  lines: CodexDiffPreviewLine[];
+  additions?: number;
+  removals?: number;
+  truncated?: boolean;
+}
+
 export interface CodexMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -80,6 +93,7 @@ export interface CodexMessage {
   kind?: CodexMessageKind;
   turnId?: string | null;
   segmentId?: string | null;
+  diffPreview?: CodexDiffPreview | null;
 }
 
 export interface CodexSegment {
