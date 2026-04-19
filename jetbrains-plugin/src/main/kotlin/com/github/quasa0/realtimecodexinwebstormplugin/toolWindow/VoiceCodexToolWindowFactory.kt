@@ -27,8 +27,10 @@ import org.cef.handler.CefLoadHandlerAdapter
 import org.cef.handler.CefPermissionHandler
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
+import java.awt.Component
 import java.io.File
 import javax.swing.JPanel
+import javax.swing.SwingUtilities
 
 class VoiceCodexToolWindowFactory : ToolWindowFactory {
 
@@ -45,7 +47,7 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                 ApplicationManager.getApplication().invokeLater {
                     val normalizedPath = requestedPath.trim()
                     if (normalizedPath.isEmpty()) return@invokeLater
-                    focusFileInIde(project, IdeFocusTarget(path = normalizedPath))
+                    focusFileInIde(project, IdeFocusTarget(path = normalizedPath), browser.component)
                 }
 
                 null
@@ -56,7 +58,7 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                 ApplicationManager.getApplication().invokeLater {
                     val target = parseFocusTarget(rawPayload)
                     if (target != null) {
-                        focusFileInIde(project, target)
+                        focusFileInIde(project, target, browser.component)
                     }
                 }
 
@@ -132,8 +134,10 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                             browser.cefBrowser.executeJavaScript(
                                 """
                                 (() => {
-                                  const text = typeof window.__VOICE_CODEX_EXPORT_TEXT__ === "function"
-                                    ? window.__VOICE_CODEX_EXPORT_TEXT__()
+                                  const text = typeof window.__VOICE_CODEX_COPY_LOGS__ === "function"
+                                    ? window.__VOICE_CODEX_COPY_LOGS__()
+                                    : typeof window.__VOICE_CODEX_EXPORT_TEXT__ === "function"
+                                      ? window.__VOICE_CODEX_EXPORT_TEXT__()
                                     : (document.body?.innerText ?? "");
                                   ${copyExportQuery.inject("text")}
                                 })();
@@ -186,7 +190,7 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
             )
         }
 
-        private fun focusFileInIde(project: Project, target: IdeFocusTarget) {
+        private fun focusFileInIde(project: Project, target: IdeFocusTarget, focusComponentToRestore: Component? = null) {
             val ioFile = if (target.path.startsWith("/")) {
                 File(target.path)
             } else {
@@ -199,10 +203,11 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
             val zeroBasedLine = (target.lineStart ?: 1).coerceAtLeast(1) - 1
             val editor = fileEditorManager.openTextEditor(
                 OpenFileDescriptor(project, virtualFile, zeroBasedLine, 0).setUseCurrentWindow(true),
-                true,
+                false,
             )
             if (editor == null) {
-                fileEditorManager.openFile(virtualFile, true)
+                fileEditorManager.openFile(virtualFile, false)
+                restoreFocus(focusComponentToRestore)
                 return
             }
 
@@ -238,6 +243,14 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
             }
             timer.isRepeats = false
             timer.start()
+            restoreFocus(focusComponentToRestore)
+        }
+
+        private fun restoreFocus(component: Component?) {
+            if (component == null) return
+            SwingUtilities.invokeLater {
+                component.requestFocusInWindow()
+            }
         }
     }
 }
