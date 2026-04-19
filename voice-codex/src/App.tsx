@@ -281,57 +281,40 @@ function EventPanel({ events }: { events: AgentEvent[] }) {
   );
 }
 
-function CodexConversationPanel({
-  messages,
-  turnStatus,
-}: {
-  messages: CodexMessage[];
-  turnStatus: "idle" | "running" | "error";
-}) {
+function CodexConversationPanel({ messages }: { messages: CodexMessage[] }) {
   return (
-    <Card className="border-white/8 bg-[#1d2421]/92 shadow-2xl shadow-black/20 backdrop-blur-sm">
-      <CardContent className="pt-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="text-sm font-medium text-zinc-100">Codex Conversation</div>
-          <Badge className={`gap-2 ${statusBadgeClass(turnStatus === "running" ? "active" : turnStatus)}`}>
-            <span
-              className={`size-1.5 rounded-full ${statusDotClass(turnStatus === "running" ? "active" : turnStatus)}`}
-            />
-            {turnStatus}
-          </Badge>
-        </div>
-        <ScrollArea className="h-[22rem] pr-3">
-          <div className="flex flex-col-reverse gap-1.5">
-            {messages.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-white/8 bg-white/[0.02] px-4 py-6 text-sm text-zinc-500">
-                No Codex messages yet.
-              </div>
-            ) : (
-              messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`border-b border-white/6 py-2 ${message.role === "assistant" ? "text-left" : "text-right"}`}
-                >
-                  <div className={`space-y-1 ${message.role === "assistant" ? "mr-12" : "ml-12"}`}>
-                    <div
-                      className={`flex flex-wrap gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] text-zinc-500 ${
-                        message.role === "assistant" ? "justify-start" : "justify-end"
-                      }`}
-                    >
-                      <span>{codexMessagePhaseLabel(message)}</span>
-                      <span>{formatLocalTime(message.timestamp)}</span>
-                    </div>
-                    <div className="whitespace-pre-wrap text-[13px] leading-5 text-zinc-100">
-                      {message.text || "..."}
-                    </div>
+    <div className="rounded-xl border border-white/8 bg-[#171d1b] p-3">
+      <ScrollArea className="h-[18rem] pr-3">
+        <div className="flex flex-col-reverse gap-1.5">
+          {messages.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-white/8 bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
+              No Codex messages yet.
+            </div>
+          ) : (
+            messages.map((message) => (
+              <div
+                key={message.id}
+                className={`border-b border-white/6 py-2 ${message.role === "assistant" ? "text-left" : "text-right"}`}
+              >
+                <div className={`space-y-1 ${message.role === "assistant" ? "mr-12" : "ml-12"}`}>
+                  <div
+                    className={`flex flex-wrap gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] text-zinc-500 ${
+                      message.role === "assistant" ? "justify-start" : "justify-end"
+                    }`}
+                  >
+                    <span>{codexMessagePhaseLabel(message)}</span>
+                    <span>{formatLocalTime(message.timestamp)}</span>
+                  </div>
+                  <div className="whitespace-pre-wrap text-[13px] leading-5 text-zinc-100">
+                    {message.text || "..."}
                   </div>
                 </div>
-              ))
-            )}
-          </div>
-        </ScrollArea>
-      </CardContent>
-    </Card>
+              </div>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </div>
   );
 }
 
@@ -866,11 +849,11 @@ export default function App() {
               <div className="flex flex-wrap items-center gap-2">
                 <Badge className={`gap-2 ${statusBadgeClass(status)}`}>
                   <span className={`size-1.5 rounded-full ${statusDotClass(status)}`} />
-                  Codex: {status}
+                  Codex {status}
                 </Badge>
                 {account?.type ? (
                   <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-200">
-                    Auth: {account.type}
+                    Auth {account.type}
                   </Badge>
                 ) : null}
                 {thread ? (
@@ -882,46 +865,49 @@ export default function App() {
                     Bootstrapping…
                   </Badge>
                 )}
+                {thread ? (
+                  <Badge variant="outline" className="border-[#b9f075]/20 bg-[#b9f075]/10 text-[#d8f5ab]">
+                    Voice bridge active
+                  </Badge>
+                ) : null}
+                <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
+                  Turn {activeTurnStatus}
+                </Badge>
               </div>
 
               {status === "connected" ? (
                 <>
                   {thread ? (
                     <div className="space-y-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="outline" className="border-[#b9f075]/20 bg-[#b9f075]/10 text-[#d8f5ab]">
-                          Voice bridge active
-                        </Badge>
-                        <Badge variant="outline" className="border-white/15 bg-zinc-950 text-zinc-300">
-                          Turn: {activeTurnStatus}
-                        </Badge>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          value={codexTaskText}
+                          onChange={(event) => setCodexTaskText(event.target.value)}
+                          className={`flex-1 ${controlSurfaceClass()}`}
+                          placeholder="Type to the Codex thread"
+                          onKeyDown={(event) => {
+                            if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
+                              event.preventDefault();
+                              void handleSendCodexTask();
+                            }
+                            if (event.key === "Escape") {
+                              setCodexTaskText("");
+                            }
+                          }}
+                        />
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="size-10 shrink-0 border-white/10 bg-[#1b221f] text-zinc-100 hover:bg-[#222b27]"
+                          onClick={() => void handleSendCodexTask()}
+                          disabled={activeTurnStatus === "running" && !activeTurnId}
+                          title="Send Codex Task"
+                        >
+                          <Send className="size-4" />
+                        </Button>
                       </div>
 
-                      <div className="space-y-2">
-                        <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Manual Codex Task</div>
-                        <div className="flex items-center gap-2">
-                          <Input
-                            value={codexTaskText}
-                            onChange={(event) => setCodexTaskText(event.target.value)}
-                            className={controlSurfaceClass()}
-                            placeholder="Fallback: send a direct task to Codex"
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                void handleSendCodexTask();
-                              }
-                            }}
-                          />
-                          <Button
-                            className="shrink-0 bg-[#b9f075] text-[#213024] hover:bg-[#c9f589]"
-                            onClick={() => void handleSendCodexTask()}
-                            disabled={activeTurnStatus === "running" && !activeTurnId}
-                          >
-                            <Send className="size-4" />
-                            Send
-                          </Button>
-                        </div>
-                      </div>
+                      <CodexConversationPanel messages={codexMessages} />
                     </div>
                   ) : (
                     <div className="rounded-xl border border-white/8 bg-[#171d1b] p-4 text-sm text-zinc-400">
@@ -946,7 +932,6 @@ export default function App() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-            <CodexConversationPanel messages={codexMessages} turnStatus={activeTurnStatus} />
             <EventPanel events={agentEvents} />
             <RealtimeLogPanel entries={realtimeLogs} />
             <JsonRpcLogPanel entries={log} />
