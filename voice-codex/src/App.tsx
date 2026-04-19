@@ -886,7 +886,7 @@ export default function App() {
                 </div>
               ) : (
                 <>
-                  <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex min-h-10 flex-wrap items-center justify-between gap-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge className={`gap-2 ${panelBadgeClass()}`}>
                         <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
@@ -991,16 +991,25 @@ export default function App() {
               }
               contentClassName="flex min-h-[36rem] flex-col space-y-4"
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge className={`gap-2 ${panelBadgeClass()}`}>
-                  <span className={`size-1.5 rounded-full ${statusDotClass(status)}`} />
-                  Codex {status}
-                </Badge>
-                {account?.type ? (
-                  <Badge variant="outline" className={panelBadgeClass()}>
-                    API
+              <div className="flex min-h-10 flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge className={`gap-2 ${panelBadgeClass()}`}>
+                    <span className={`size-1.5 rounded-full ${statusDotClass(status)}`} />
+                    Codex {status}
                   </Badge>
-                ) : null}
+                  {account?.type ? (
+                    <Badge variant="outline" className={panelBadgeClass()}>
+                      API
+                    </Badge>
+                  ) : null}
+                </div>
+
+                <div
+                  aria-hidden="true"
+                  className="h-10 rounded-full px-4 opacity-0 pointer-events-none select-none"
+                >
+                  End call
+                </div>
               </div>
 
               {status === "connected" ? (
