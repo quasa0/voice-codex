@@ -865,7 +865,7 @@ export default function App() {
 
             <PanelShell
               title="Codex App Server"
-              description="Codex agent control path for local threads and voice handoff."
+              description="Local Codex agent."
               icon={<Cable className="size-4" />}
               headerRight={
                 <Badge className={`gap-2 ${turnBadgeClass(activeTurnStatus)}`}>
@@ -885,15 +885,6 @@ export default function App() {
                     API
                   </Badge>
                 ) : null}
-                {thread ? (
-                  <Badge variant="outline" className={panelBadgeClass()}>
-                    Thread ✓
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className={panelBadgeClass()}>
-                    Bootstrapping…
-                  </Badge>
-                )}
               </div>
 
               {status === "connected" ? (
