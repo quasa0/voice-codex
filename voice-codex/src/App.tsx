@@ -211,6 +211,37 @@ function normalizeCodexDispatchText(text: string) {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
+function shouldForceCodexDispatch(text: string) {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  return (
+    /^(?:literally\s+)?(?:please\s+)?(?:ask|tell)\s+codex\s+to\b/.test(normalized) ||
+    /^(?:literally\s+)?(?:please\s+)?(?:ask|tell)\s+(?:it|him|the agent|the coding agent)\s+to\b/.test(normalized) ||
+    /^(?:literally\s+)?(?:please\s+)?i\s+said\s+(?:ask|tell)\s+(?:codex|it|him|the agent|the coding agent)\s+to\b/.test(normalized)
+  );
+}
+
+function buildManagedCodexRequest(originalText: string, normalizedText: string) {
+  const original = originalText.trim();
+  const normalized = normalizedText.trim() || original;
+  return [
+    "<system_context>",
+    "You are being managed by a Realtime Voice layer that may pass through the user's spoken words with routing wrappers.",
+    "Treat the cleaned task below as the real user request.",
+    "Do not focus on wrapper phrases like \"ask codex to\", \"tell codex to\", or similar orchestration language.",
+    "If the original spoken utterance is ambiguous, prefer the cleaned task.",
+    "</system_context>",
+    "",
+    "<original_spoken_utterance>",
+    original,
+    "</original_spoken_utterance>",
+    "",
+    "<cleaned_task>",
+    normalized,
+    "</cleaned_task>",
+  ].join("\n");
+}
+
 function segmentHasMeaningfulSummary(segment: CodexSegment | null) {
   if (!segment) return false;
   return Boolean(
@@ -710,17 +741,6 @@ function getSegmentWorkingLabel(segment: CodexSegment | null) {
   return "working...";
 }
 
-function getSegmentStatusLabel(segment: CodexSegment | null) {
-  if (!segment) return "idle";
-  if (segment.codexState === "waiting_for_user") return "needs input";
-  if (segment.codexState === "running") {
-    if (segment.mode === "interrupt") return "switching";
-    if (segment.mode === "steer") return "adjusting";
-    return "working";
-  }
-  return "idle";
-}
-
 function buildSegmentSnapshot(segment: CodexSegment | null) {
   if (!segment) return null;
   return {
@@ -926,7 +946,7 @@ function RealtimeStatusBadge({
         : "font-medium text-[#4f5661]";
 
   return (
-    <div className="flex h-9 w-[112px] items-center gap-2 rounded-full border border-transparent bg-white px-3 shadow-none">
+    <div className="flex h-9 w-[112px] items-center gap-2 rounded-full border border-transparent bg-white pl-0 pr-3 shadow-none">
       <div className="w-[28px]">
         <RealtimeWaveBars isMuted={isMuted} isActive={active} />
       </div>
@@ -939,58 +959,48 @@ function CodexStatusGlyph({ codexState }: { codexState: CodexSegmentState }) {
   const active = codexState === "running";
   const waiting = codexState === "waiting_for_user";
   const failed = codexState === "failed";
-  const completed = codexState === "completed";
+  const dotClass = failed
+    ? "bg-[#c83f3f]"
+    : waiting
+      ? "bg-[#c77a1b]"
+      : active
+        ? "bg-[#2fa860]"
+        : "bg-[#c4c9cf]";
 
   return (
-    <div className="flex h-[14px] w-[28px] items-end justify-center gap-[2px]">
-      {STATUS_PILL_BAR_LEVELS.map((height, index) => {
-        const barClass = failed
-          ? "bg-[#c83f3f]"
-          : waiting
-            ? "bg-[#c77a1b]"
-            : active
-              ? "bg-[#2fa860]"
-              : completed
-                ? "bg-[#2fa860]"
-              : "bg-[#c4c9cf]";
-
-        const renderedHeight = Math.max(4, Math.round(14 * (active ? height : 0.3)));
-        return (
-          <span
-            key={`${index}-${height}`}
-            className={`rounded-full ${barClass}`}
-            style={{
-              width: "2px",
-              height: `${renderedHeight}px`,
-              animation:
-                active
-                  ? `status-pill-wave 1s ease-in-out ${STATUS_PILL_BAR_DELAYS[index]}s infinite`
-                    : "none",
-              transformOrigin: "bottom",
-            }}
-          />
-        );
-      })}
+    <div className="flex h-[14px] w-[28px] items-center justify-center">
+      <span
+        className={`size-2 rounded-full ${dotClass} ${active ? "codex-working-dot" : ""}`}
+      />
     </div>
   );
 }
 
-function CodexStatusBadge({ codexState }: { codexState: CodexSegmentState }) {
+function CodexStatusBadge({
+  codexState,
+  activeSegment,
+}: {
+  codexState: CodexSegmentState;
+  activeSegment: CodexSegment | null;
+}) {
+  const workingLabel = getSegmentWorkingLabel(activeSegment);
   const label =
-    codexState === "waiting_for_user"
-      ? "Waiting"
-      : codexState === "completed"
-        ? "Complete"
+    workingLabel === "idle"
+      ? "Idle"
+      : `${workingLabel.charAt(0).toUpperCase()}${workingLabel.slice(1)}`;
+  const labelClass =
+    codexState === "running"
+      ? "font-semibold text-[#2fa860]"
+      : codexState === "waiting_for_user"
+        ? "font-medium text-[#c77a1b]"
         : codexState === "failed"
-          ? "Failed"
-          : codexState === "running"
-            ? "Working"
-            : "Idle";
+          ? "font-medium text-[#c83f3f]"
+          : "font-medium text-[#c4c9cf]";
 
   return (
-    <div className="flex h-9 w-[112px] items-center gap-2 rounded-full border border-transparent bg-white px-3 shadow-none">
+    <div className="flex h-9 max-w-[260px] items-center gap-2 rounded-full border border-transparent bg-white pl-0 pr-3 shadow-none">
       <CodexStatusGlyph codexState={codexState} />
-      <div className="text-[11.5px] font-medium leading-none text-[#4f5661]">{label}</div>
+      <div className={`min-w-0 truncate text-[11.5px] leading-none ${labelClass}`}>{label}</div>
     </div>
   );
 }
@@ -1226,12 +1236,6 @@ function CodexConversationPanel({
   messages: CodexMessage[];
   activeSegment: CodexSegment | null;
 }) {
-  const workingLabel = getSegmentWorkingLabel(activeSegment);
-  const statusLabel = getSegmentStatusLabel(activeSegment);
-  const animateWorkingRow = activeSegment?.codexState === "running";
-  const workingIndicatorClass = animateWorkingRow
-    ? "bg-[#2fa860] shadow-[0_0_0_3px_rgba(47,168,96,0.18)]"
-    : "bg-[#c4c9cf] shadow-none";
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -1304,28 +1308,6 @@ function CodexConversationPanel({
               </div>
             ))
           )}
-          {messages.length > 0 ? (
-            <div className="py-1.5">
-              <div
-                className={`relative flex min-h-6 w-full items-center gap-3 overflow-hidden rounded-full border border-[#e1e4e8] bg-white px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-[#8a9099] ${
-                  animateWorkingRow ? "codex-working-row" : ""
-                }`}
-              >
-                {animateWorkingRow ? (
-                  <span
-                    aria-hidden="true"
-                    className="pointer-events-none absolute inset-y-0 left-[-24%] w-[24%] bg-[linear-gradient(90deg,transparent,rgba(47,168,96,0.14),transparent)] codex-working-sheen"
-                  />
-                ) : null}
-                <span className="relative shrink-0 font-medium text-[#1e6b3f]">{statusLabel}</span>
-                <span
-                  className={`relative size-1.5 shrink-0 rounded-full ${workingIndicatorClass} ${animateWorkingRow ? "codex-working-dot" : ""}`}
-                />
-                <span className="min-w-0 flex-1 truncate normal-case tracking-normal text-[#1f2328]">{workingLabel}</span>
-                {activeSegment ? <TimestampLabel timestamp={activeSegment.updatedAt} className="shrink-0" /> : null}
-              </div>
-            </div>
-          ) : null}
         </div>
       </div>
     </div>
@@ -1528,8 +1510,8 @@ export default function App() {
       ?.id ?? null,
   );
   const routeCacheRef = useRef(new Map<string, RoutedIntent>());
-  const queuedInterruptReplacementRef = useRef<{ request: string; segmentId: string } | null>(null);
-  const pendingCodexNarrationRef = useRef<{ request: string; segmentId: string } | null>(null);
+  const queuedInterruptReplacementRef = useRef<{ relayRequest: string; codexRequest: string; segmentId: string } | null>(null);
+  const pendingCodexNarrationRef = useRef<{ relayRequest: string; codexRequest: string; segmentId: string } | null>(null);
   const lastRelayedQuestionRef = useRef<string | null>(null);
   const debugNotesRef = useRef<DebugNote[]>([]);
   const realtimeReconnectAttemptAtRef = useRef(0);
@@ -1927,13 +1909,20 @@ export default function App() {
         return;
       }
 
+      const forceCodexDispatch = shouldForceCodexDispatch(latestFinalUserMessage.text);
       let routed = routeCacheRef.current.get(latestFinalUserMessage.id);
-      if (!routed) {
+      if (!routed && !forceCodexDispatch) {
         routed = await routeIntent(latestFinalUserMessage.text, currentCodexState === "running" || currentCodexState === "waiting_for_user");
         if (abortIfSuperseded()) return;
         routeCacheRef.current.set(latestFinalUserMessage.id, routed);
       }
+      if (!routed && forceCodexDispatch) {
+        routed = activeTurnStatus === "running"
+          ? { action: "codex_steer", chat_mode: "normal", reason: "forced_wrapper_dispatch" }
+          : { action: "codex_start", chat_mode: "normal", reason: "forced_wrapper_dispatch" };
+      }
       if (abortIfSuperseded()) return;
+      if (!routed) return;
 
       if (routed.action === "chat_only") {
         if (routed.chat_mode === "relay_codex_status") {
@@ -2001,7 +1990,7 @@ export default function App() {
 
         if (routed.chat_mode === "relay_latest_codex") {
           const relevantSegment =
-            currentSegment ??
+            (currentSegment && segmentHasMeaningfulSummary(currentSegment) ? currentSegment : null) ??
             [...segments].reverse().find((segment) => segment.finalOutcome || segment.blockingQuestion || segment.latestMilestone) ??
             null;
           if (relevantSegment) {
@@ -2031,9 +2020,11 @@ export default function App() {
       setThreadError(null);
 
       const codexDispatchText = normalizeCodexDispatchText(latestFinalUserMessage.text);
+      const visibleCodexRequest = codexDispatchText || latestFinalUserMessage.text;
+      const managedCodexRequest = buildManagedCodexRequest(latestFinalUserMessage.text, visibleCodexRequest);
       addDebugNote(
         "codex_dispatch_text",
-        `original=${latestFinalUserMessage.text}; normalized=${codexDispatchText || latestFinalUserMessage.text}`,
+        `original=${latestFinalUserMessage.text}; normalized=${visibleCodexRequest}`,
       );
 
       let activeThread = thread;
@@ -2045,8 +2036,8 @@ export default function App() {
 
       if (routed.action === "codex_interrupt" && activeTurnStatus === "running") {
         const segmentId = beginSegment("interrupt", latestFinalUserMessage.text);
-        queuedInterruptReplacementRef.current = { request: codexDispatchText || latestFinalUserMessage.text, segmentId };
-        pendingCodexNarrationRef.current = { request: codexDispatchText || latestFinalUserMessage.text, segmentId };
+        queuedInterruptReplacementRef.current = { relayRequest: visibleCodexRequest, codexRequest: managedCodexRequest, segmentId };
+        pendingCodexNarrationRef.current = { relayRequest: visibleCodexRequest, codexRequest: managedCodexRequest, segmentId };
         await interruptTurn(activeThread.id);
         addRealtimeSystemMessage("interrupt", "interrupt");
         return;
@@ -2054,16 +2045,16 @@ export default function App() {
 
       if (routed.action === "codex_steer" && activeTurnStatus === "running" && activeTurnId) {
         const segmentId = beginSegment("steer", latestFinalUserMessage.text);
-        pendingCodexNarrationRef.current = { request: codexDispatchText || latestFinalUserMessage.text, segmentId };
-        await steerTurn(activeThread.id, codexDispatchText || latestFinalUserMessage.text, segmentId);
+        pendingCodexNarrationRef.current = { relayRequest: visibleCodexRequest, codexRequest: managedCodexRequest, segmentId };
+        await steerTurn(activeThread.id, managedCodexRequest, segmentId, visibleCodexRequest);
         addRealtimeSystemMessage("steer", "steer");
         return;
       }
 
       if (activeTurnStatus === "idle") {
         const segmentId = beginSegment("start", latestFinalUserMessage.text);
-        pendingCodexNarrationRef.current = { request: codexDispatchText || latestFinalUserMessage.text, segmentId };
-        await startTurn(activeThread.id, codexDispatchText || latestFinalUserMessage.text, segmentId);
+        pendingCodexNarrationRef.current = { relayRequest: visibleCodexRequest, codexRequest: managedCodexRequest, segmentId };
+        await startTurn(activeThread.id, managedCodexRequest, segmentId, visibleCodexRequest);
         addRealtimeSystemMessage("new turn", "start");
       }
     };
@@ -2134,7 +2125,7 @@ export default function App() {
     queuedInterruptReplacementRef.current = null;
     pendingCodexNarrationRef.current = replacement;
 
-    void startTurn(thread.id, replacement.request, replacement.segmentId).catch((error) => {
+    void startTurn(thread.id, replacement.codexRequest, replacement.segmentId, replacement.relayRequest).catch((error) => {
       setThreadError((error as Error).message);
     });
   }, [activeTurnStatus, startTurn, thread]);
@@ -2170,7 +2161,7 @@ export default function App() {
         `segment=${targetSegment.id}; state=${targetSegment.codexState}; summary=${getSegmentFirstLine(targetSegment.finalOutcome) ?? getSegmentFirstLine(targetSegment.latestMilestone) ?? "activity_only"}`,
       );
       sendRealtimeText(
-        `Codex finished a segment. Give the user a very short spoken summary of what changed or what Codex accomplished. Use only the structured segment summary below. Do not read raw command output. Do not repeat the user's wording. Keep it to one or two short sentences. End with one very short follow-up question, for example "Want tweaks?" No invention.\n\nOriginal user request:\n${pending.request}\n\nCodex segment summary:\n${JSON.stringify(buildSegmentSnapshot(targetSegment), null, 2)}\n\nCondensed status:\n${summarizeSegmentStatus(targetSegment, agentEvents)}`,
+        `Codex finished a segment. Give the user a very short spoken summary of what changed or what Codex accomplished. Use only the structured segment summary below. Do not read raw command output. Do not repeat the user's wording. Keep it to one or two short sentences. End with one very short follow-up question, for example "Want tweaks?" No invention.\n\nOriginal user request:\n${pending.relayRequest}\n\nCodex segment summary:\n${JSON.stringify(buildSegmentSnapshot(targetSegment), null, 2)}\n\nCondensed status:\n${summarizeSegmentStatus(targetSegment, agentEvents)}`,
         { requestResponse: true, visible: false },
       );
       updateSegment(targetSegment.id, (seg) => ({
@@ -2327,7 +2318,7 @@ export default function App() {
         <div className={paneOnlyMode ? "flex min-h-0 flex-1 flex-col" : "space-y-4"}>
           <div className={`grid items-stretch gap-0 border-y border-[#e1e4e8] bg-white md:grid-cols-2 ${paneOnlyMode ? "min-h-0 flex-1 auto-rows-fr" : "rounded-lg border-x shadow-[0_1px_2px_rgba(18,22,28,0.04)]"}`}>
             <PanelShell
-              title="Realtime Voice Agent"
+              title="Realtime Voice"
               icon={<OpenAIWordmarkIcon />}
               headerRight={
                 <Badge
@@ -2529,7 +2520,12 @@ export default function App() {
               contentClassName={`flex flex-col gap-2 ${paneOnlyMode ? "min-h-0 h-full" : "min-h-[36rem]"}`}
             >
               <PaneStatusRow
-                left={<CodexStatusBadge codexState={status === "connected" ? currentCodexState : "idle"} />}
+                left={
+                  <CodexStatusBadge
+                    codexState={status === "connected" ? currentCodexState : "idle"}
+                    activeSegment={status === "connected" ? currentSegment : null}
+                  />
+                }
                 right={
                   <Button
                     variant="destructive"

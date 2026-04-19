@@ -112,6 +112,7 @@ function messageRequestsUserInput(text: string) {
   const trimmed = text.trim();
   if (!trimmed || isCodexProgressMessage(trimmed)) return false;
   if (messageLooksLikeStructuredOutput(trimmed)) return false;
+  if (inferRunningAssistantKind(trimmed)) return false;
   if (trimmed.includes("?")) return true;
 
   const lowered = trimmed.toLowerCase();
@@ -1142,16 +1143,22 @@ export function useCodexWebSocket(options: UseCodexWebSocketOptions = {}) {
     return result.thread;
   }, [send]);
 
-  const startTurn = useCallback(async (threadId: string, text: string, segmentId?: string): Promise<void> => {
+  const startTurn = useCallback(async (
+    threadId: string,
+    text: string,
+    segmentId?: string,
+    displayText?: string,
+  ): Promise<void> => {
     const trimmed = text.trim();
+    const visibleText = (displayText ?? text).trim();
     if (!trimmed) throw new Error("Task text is empty");
-    const activeSegmentId = segmentId ?? beginSegment("start", trimmed);
+    const activeSegmentId = segmentId ?? beginSegment("start", visibleText || trimmed);
     pendingNextTurnSegmentIdRef.current = activeSegmentId;
     activeSegmentIdRef.current = activeSegmentId;
     appendCodexMessage({
       id: `user-${Date.now()}`,
       role: "user",
-      text: trimmed,
+      text: visibleText || trimmed,
       status: "final",
       timestamp: nowTime(),
       segmentId: activeSegmentId,
@@ -1170,16 +1177,22 @@ export function useCodexWebSocket(options: UseCodexWebSocketOptions = {}) {
     }
   }, [appendCodexMessage, beginSegment, bindSegmentToTurn, send]);
 
-  const steerTurn = useCallback(async (threadId: string, text: string, segmentId?: string): Promise<void> => {
+  const steerTurn = useCallback(async (
+    threadId: string,
+    text: string,
+    segmentId?: string,
+    displayText?: string,
+  ): Promise<void> => {
     const trimmed = text.trim();
+    const visibleText = (displayText ?? text).trim();
     if (!trimmed) throw new Error("Steering text is empty");
     if (!activeTurnId) throw new Error("No active Codex turn to steer");
-    const activeSegmentId = segmentId ?? beginSegment("steer", trimmed);
+    const activeSegmentId = segmentId ?? beginSegment("steer", visibleText || trimmed);
     bindSegmentToTurn(activeSegmentId, activeTurnId);
     appendCodexMessage({
       id: `user-steer-${Date.now()}`,
       role: "user",
-      text: trimmed,
+      text: visibleText || trimmed,
       status: "final",
       timestamp: nowTime(),
       turnId: activeTurnId,
