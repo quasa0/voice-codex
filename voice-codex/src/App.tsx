@@ -1210,7 +1210,7 @@ export default function App() {
 
                     <Button
                       variant="destructive"
-                      className="h-10 rounded-full border-red-500/22 bg-[#5a2e28] px-4 text-red-100 hover:bg-[#6a342d]"
+                      className="h-8 rounded-full border border-red-500/22 bg-[#5a2e28] px-3 text-[13px] font-medium text-red-100 hover:bg-[#6a342d]"
                       onClick={() => disconnectRealtime()}
                       title="End call"
                     >
