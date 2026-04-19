@@ -1071,6 +1071,7 @@ export function useCodexWebSocket() {
       timestamp: nowTime(),
       segmentId: activeSegmentId,
     });
+    activeTurnStatusRef.current = "running";
     setActiveTurnStatus("running");
     const resp = await send("turn/start", {
       threadId,
@@ -1078,6 +1079,7 @@ export function useCodexWebSocket() {
     });
     const turnId = (resp as { result?: { turn?: { id?: string } } }).result?.turn?.id;
     if (turnId) {
+      activeTurnIdRef.current = turnId;
       setActiveTurnId(turnId);
       bindSegmentToTurn(activeSegmentId, turnId);
     }
