@@ -779,15 +779,17 @@ function CodexConversationPanel({
                 ) : (
                   <>
                     <div
-                      className={`flex items-center gap-2 text-[11px] text-zinc-500 ${
+                      className={`flex items-baseline gap-2 text-[11px] leading-none text-zinc-500 ${
                         message.role === "assistant" ? "justify-start" : "justify-end"
                       }`}
                     >
                       <TimestampLabel timestamp={message.timestamp} />
                       {codexMessagePhaseLabel(message) ? (
-                        <span className={message.status === "streaming" ? "text-[#b9f075]" : "text-zinc-500"}>
-                          {codexMessagePhaseLabel(message)}
-                        </span>
+                        message.status === "streaming" ? (
+                          <StreamingPhaseLabel label={codexMessagePhaseLabel(message) ?? "streaming"} />
+                        ) : (
+                          <span className="text-zinc-500">{codexMessagePhaseLabel(message)}</span>
+                        )
                       ) : null}
                     </div>
                     <div
@@ -875,15 +877,17 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
                 ) : (
                   <>
                     <div
-                      className={`flex items-center gap-2 text-[11px] text-zinc-500 ${
+                      className={`flex items-baseline gap-2 text-[11px] leading-none text-zinc-500 ${
                         message.role === "user" ? "justify-end" : "justify-start"
                       }`}
                     >
                       <TimestampLabel timestamp={message.timestamp} />
                       {messagePhaseLabel(message) ? (
-                        <span className={message.status === "streaming" ? "text-[#b9f075]" : "text-zinc-500"}>
-                          {messagePhaseLabel(message)}
-                        </span>
+                        message.status === "streaming" ? (
+                          <StreamingPhaseLabel label={messagePhaseLabel(message) ?? "streaming"} />
+                        ) : (
+                          <span className="text-zinc-500">{messagePhaseLabel(message)}</span>
+                        )
                       ) : null}
                       {message.role === "user" ? (
                         <span className="rounded-full border border-white/8 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-400">
@@ -909,6 +913,19 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
         </div>
       </div>
     </div>
+  );
+}
+
+function StreamingPhaseLabel({ label }: { label: string }) {
+  return (
+    <span className="inline-flex items-baseline gap-1 text-[#b9f075]">
+      <span className="streaming-label-glow">{label}</span>
+      <span className="inline-flex w-[1.2em] justify-start tabular-nums">
+        <span className="streaming-dot-1">.</span>
+        <span className="streaming-dot-2">.</span>
+        <span className="streaming-dot-3">.</span>
+      </span>
+    </span>
   );
 }
 
@@ -1394,6 +1411,15 @@ export default function App() {
   return (
     <div className={`dark bg-transparent text-zinc-50 ${paneOnlyMode ? "h-screen overflow-hidden" : "min-h-screen"}`}>
       <style>{`
+        @keyframes streaming-label-pulse {
+          0%, 100% { color: rgba(185, 240, 117, 0.78); text-shadow: 0 0 0 rgba(185, 240, 117, 0); }
+          50% { color: rgba(216, 245, 171, 1); text-shadow: 0 0 10px rgba(185, 240, 117, 0.28); }
+        }
+        @keyframes streaming-dot-fade {
+          0%, 20% { opacity: 0.18; }
+          50% { opacity: 1; }
+          100% { opacity: 0.18; }
+        }
         @keyframes realtime-wave {
           0%, 100% { transform: scaleY(0.48); opacity: 0.86; }
           50% { transform: scaleY(1.02); opacity: 1; }
@@ -1428,6 +1454,20 @@ export default function App() {
         }
         .codex-working-sheen {
           animation: codex-working-sheen 2.9s ease-in-out infinite;
+        }
+        .streaming-label-glow {
+          animation: streaming-label-pulse 1.8s ease-in-out infinite;
+        }
+        .streaming-dot-1,
+        .streaming-dot-2,
+        .streaming-dot-3 {
+          animation: streaming-dot-fade 1.2s ease-in-out infinite;
+        }
+        .streaming-dot-2 {
+          animation-delay: 0.18s;
+        }
+        .streaming-dot-3 {
+          animation-delay: 0.36s;
         }
       `}</style>
       <div className={`flex flex-col gap-4 ${paneOnlyMode ? "h-full w-full px-3 py-3 sm:px-4 lg:px-5" : "mx-auto max-w-[1180px] px-3 py-4 sm:px-5 lg:px-6"}`}>
