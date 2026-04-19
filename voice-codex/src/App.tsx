@@ -880,7 +880,7 @@ export default function App() {
     if (!pendingCodexNarrationRef.current) return;
 
     const pending = pendingCodexNarrationRef.current;
-    const latestCodexReply = [...codexMessages]
+    const scopedReply = [...codexMessages]
       .reverse()
       .find(
         (message) =>
@@ -889,21 +889,23 @@ export default function App() {
           (!pending.turnId || message.turnId === pending.turnId),
       );
 
-    if (!latestCodexReply) return;
-    if (lastNarratedCodexMessageIdRef.current === latestCodexReply.id) return;
+    if (!scopedReply) return;
+    if (lastNarratedCodexMessageIdRef.current === scopedReply.id) return;
+
+    const codexSummary = summarizeCurrentCodexActivity("idle", agentEvents, codexMessages);
 
     pendingCodexNarrationRef.current = null;
-    lastNarratedCodexMessageIdRef.current = latestCodexReply.id;
+    lastNarratedCodexMessageIdRef.current = scopedReply.id;
 
     try {
       sendRealtimeText(
-        `Codex finished. Relay result to user. Use only Codex result. No invention. If short, keep short. If list, read compactly.\n\nOriginal user request:\n${pending.request}\n\nCodex result:\n${latestCodexReply.text}`,
+        `Codex finished. Give the user a very short summary of what changed or what Codex accomplished since the latest handoff. Do not read raw command output. Do not repeat the user's wording. Keep it to one or two short sentences. No invention.\n\nOriginal user request:\n${pending.request}\n\nCodex segment summary:\n${codexSummary}`,
         { requestResponse: true, visible: false },
       );
     } catch (error) {
       console.error(error);
     }
-  }, [activeTurnStatus, codexMessages, sendRealtimeText]);
+  }, [activeTurnStatus, agentEvents, codexMessages, sendRealtimeText]);
 
   const handleSendCodexTask = async () => {
     const task = codexTaskText.trim();
