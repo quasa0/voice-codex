@@ -285,6 +285,14 @@ function formatLocalTime(timestamp: string) {
   }).format(date);
 }
 
+function TimestampLabel({ timestamp, className = "" }: { timestamp: string; className?: string }) {
+  return (
+    <span className={`font-mono text-[10.5px] tracking-[0.04em] text-zinc-500 ${className}`.trim()}>
+      {formatLocalTime(timestamp)}
+    </span>
+  );
+}
+
 function messagePhaseLabel(message: RealtimeMessage) {
   if (message.role === "system") return "event";
   if (message.role === "assistant") {
@@ -600,9 +608,7 @@ function CodexConversationPanel({ messages }: { messages: CodexMessage[] }) {
                     >
                       {message.text}
                     </span>
-                    <span className="absolute right-0 text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                      {formatLocalTime(message.timestamp)}
-                    </span>
+                    <TimestampLabel timestamp={message.timestamp} className="absolute right-0" />
                   </div>
                 ) : (
                   <div className={`space-y-1 ${message.role === "assistant" ? "mr-12" : "ml-12"}`}>
@@ -676,9 +682,7 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
                           {message.source}
                         </span>
                       ) : null}
-                      <span className="font-mono text-[10.5px] tracking-[0.04em] text-zinc-500">
-                        {formatLocalTime(message.timestamp)}
-                      </span>
+                      <TimestampLabel timestamp={message.timestamp} />
                     </div>
                     <div
                       className={`whitespace-pre-wrap text-[15px] leading-[1.65] ${
