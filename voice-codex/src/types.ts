@@ -61,6 +61,14 @@ export type CodexSegmentMode = "start" | "steer" | "interrupt";
 export type CodexSegmentState = "idle" | "running" | "waiting_for_user" | "completed" | "failed";
 export type CodexRelayState = "not_spoken" | "progress_spoken" | "clarification_spoken" | "completion_spoken";
 export type CodexMessageKind = "reply" | "read" | "edit" | "command" | "plan" | "error";
+export type CodexSegmentActivityKind = "read" | "edit" | "command" | "plan" | "reply" | "error";
+
+export interface CodexSegmentActivity {
+  id: string;
+  kind: CodexSegmentActivityKind;
+  summary: string;
+  timestamp: string;
+}
 
 export interface CodexMessage {
   id: string;
@@ -89,6 +97,7 @@ export interface CodexSegment {
   filesRead: string[];
   filesEdited: string[];
   commandsRun: string[];
+  activities: CodexSegmentActivity[];
 }
 
 declare global {

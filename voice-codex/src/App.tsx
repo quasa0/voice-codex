@@ -3,7 +3,7 @@ import { Activity, Cable, Mic, MicOff, PhoneOff, Play, Radio, Send, SkipForward,
 import { useCodexWebSocket } from "./useCodexWebSocket";
 import { useOpenAIRealtime } from "./useOpenAIRealtime";
 import type { OpenAIRealtimeStatus } from "./useOpenAIRealtime";
-import type { LogEntry, AgentEvent, ModelInfo, CodexMessage, CodexMessageKind, CodexSegment, CodexSegmentState } from "./types";
+import type { LogEntry, AgentEvent, ModelInfo, CodexMessage, CodexMessageKind, CodexSegment, CodexSegmentActivity, CodexSegmentState } from "./types";
 import { getCodexProjectCwd } from "./codexConfig";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -133,6 +133,29 @@ function getSegmentEvents(agentEvents: AgentEvent[], segmentId?: string | null) 
   return agentEvents.filter((event) => event.segmentId === segmentId);
 }
 
+function getRecentSegmentActivities(segment: CodexSegment | null, limit = 3) {
+  if (!segment) return [];
+  return segment.activities.slice(-limit).reverse();
+}
+
+function summarizeSegmentActivitiesForSpeech(activities: CodexSegmentActivity[]) {
+  const summarized = activities
+    .map((activity) => {
+      if (activity.kind === "read") {
+        const cleaned = activity.summary.replace(/^Running:\s*/i, "").trim();
+        return cleaned ? `Read step: ${cleaned}` : "Reading files.";
+      }
+      if (activity.kind === "edit") return activity.summary;
+      if (activity.kind === "plan") return "Updated the plan.";
+      if (activity.kind === "error") return activity.summary;
+      return activity.summary;
+    })
+    .filter(Boolean);
+
+  if (summarized.length === 0) return null;
+  return summarized.join(" ").slice(0, 220);
+}
+
 function summarizeSegmentStatus(segment: CodexSegment | null, agentEvents: AgentEvent[] = []) {
   if (!segment) return "Codex is idle right now.";
 
@@ -234,6 +257,7 @@ function summarizeRunningSegmentForSpeech(
   const latestCommand = getLatestCodexCommand(segment);
   const latestProgressMessage = getLatestSegmentAssistantProgress(segmentMessages);
   const latestEventSummary = summarizeRecentCommands(getSegmentEvents(agentEvents, segment.id));
+  const recentActivitySummary = summarizeSegmentActivitiesForSpeech(getRecentSegmentActivities(segment, 2));
   const workingLabel = getSegmentWorkingLabel(segment);
   if (workingLabel === "waiting for input...") {
     return "Codex is waiting for input.";
@@ -248,6 +272,7 @@ function summarizeRunningSegmentForSpeech(
   if (latestProgressMessage?.kind === "read") {
     const latestReadFile = segment.filesRead.at(-1);
     if (latestReadFile) return `Codex is reading ${latestReadFile}.`;
+    if (recentActivitySummary) return recentActivitySummary;
     if (latestEventSummary) return `Codex is reading files. ${latestEventSummary}`.slice(0, 180);
     return "Codex is reading files.";
   }
@@ -285,6 +310,7 @@ function summarizeRunningSegmentForSpeech(
     return `Codex is ${workingLabel.replace(/\.\.\.$/, ".")}`;
   }
 
+  if (recentActivitySummary) return recentActivitySummary;
   return "Codex is working.";
 }
 
@@ -337,6 +363,7 @@ function buildExactCodexRelayReply(
   const latestMilestone = getSegmentFirstLine(segment.latestMilestone);
   const readEditSummary = buildSegmentReadEditSummary(segment);
   const latestCommand = getLatestCodexCommand(segment);
+  const recentActivitySummary = summarizeSegmentActivitiesForSpeech(getRecentSegmentActivities(segment));
 
   if (asksLastMessage) {
     if (blockingQuestion) return `Codex's last message was: ${blockingQuestion}`;
@@ -364,6 +391,10 @@ function buildExactCodexRelayReply(
 
     if (finalOutcome) {
       return [lead, `Latest result: ${finalOutcome}`, readEditSummary].filter(Boolean).join(" ").slice(0, 320);
+    }
+
+    if (recentActivitySummary) {
+      return [lead, recentActivitySummary, readEditSummary].filter(Boolean).join(" ").slice(0, 320);
     }
 
     if (latestMilestone) {
@@ -439,6 +470,7 @@ function buildSegmentSnapshot(segment: CodexSegment | null) {
     filesRead: segment.filesRead,
     filesEdited: segment.filesEdited,
     commandsRun: segment.commandsRun.slice(-5),
+    activities: segment.activities.slice(-8),
   };
 }
 

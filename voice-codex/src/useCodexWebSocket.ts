@@ -10,6 +10,7 @@ import type {
   CodexMessage,
   CodexMessageKind,
   CodexSegment,
+  CodexSegmentActivityKind,
   CodexRelayState,
   CodexSegmentMode,
 } from "./types";
@@ -19,6 +20,26 @@ let nextId = 1;
 
 function nowTime() {
   return new Date().toISOString().slice(11, 19);
+}
+
+function newActivityId() {
+  return `activity-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function appendSegmentActivity(
+  activities: CodexSegment["activities"],
+  kind: CodexSegmentActivityKind,
+  summary: string,
+) {
+  return [
+    ...activities,
+    {
+      id: newActivityId(),
+      kind,
+      summary,
+      timestamp: nowTime(),
+    },
+  ].slice(-12);
 }
 
 function newSegmentId() {
@@ -417,6 +438,7 @@ export function useCodexWebSocket() {
       filesRead: [],
       filesEdited: [],
       commandsRun: [],
+      activities: [],
     };
 
     activeSegmentIdRef.current = segmentId;
@@ -469,17 +491,20 @@ export function useCodexWebSocket() {
     const touchedPath = extractTouchedPath(command);
     const idePath = extractCommandFilePath(command);
     const commandLineRange = extractCommandLineRange(command);
+    const commandKind = classifyCommandKind(command);
+    const commandSummary = summarizeCommandLabel(item);
     openFileInIde(idePath ? { path: idePath, ...commandLineRange } : null);
     updateSegment(segmentId, (segment) => ({
       ...segment,
       codexState: "running",
-      latestMilestone: summarizeCommandLabel(item),
+      latestMilestone: commandSummary,
       commandsRun: command && !segment.commandsRun.includes(command)
         ? [...segment.commandsRun, command].slice(-8)
         : segment.commandsRun,
       filesRead: touchedPath && !segment.filesRead.includes(touchedPath)
         ? [...segment.filesRead, touchedPath].slice(-8)
         : segment.filesRead,
+      activities: appendSegmentActivity(segment.activities, commandKind, commandSummary),
     }));
   }, [openFileInIde, updateSegment]);
 
@@ -510,6 +535,10 @@ export function useCodexWebSocket() {
         latestMilestone: status === "final" ? firstLine ?? segment.latestMilestone : segment.latestMilestone,
         blockingQuestion,
         finalOutcome,
+        activities:
+          status === "final" && firstLine
+            ? appendSegmentActivity(segment.activities, "reply", firstLine)
+            : segment.activities,
       };
     });
   }, [updateSegment]);
@@ -519,6 +548,7 @@ export function useCodexWebSocket() {
       ...segment,
       codexState: "running",
       latestMilestone: truncateLine(summary) ?? segment.latestMilestone,
+      activities: appendSegmentActivity(segment.activities, "plan", truncateLine(summary) ?? summary),
     }));
   }, [updateSegment]);
 
@@ -536,6 +566,7 @@ export function useCodexWebSocket() {
       filesEdited: editedPath && !segment.filesEdited.includes(editedPath)
         ? [...segment.filesEdited, editedPath].slice(-8)
         : segment.filesEdited,
+      activities: appendSegmentActivity(segment.activities, "edit", milestone ?? (editedPath ? `Updated ${editedPath}` : "Updated files")),
     }));
   }, [openFileInIde, updateSegment]);
 
@@ -809,6 +840,10 @@ export function useCodexWebSocket() {
             turn?.status === "failed" && errorMessage
               ? `Turn failed: ${errorMessage}`
               : segment.finalOutcome,
+          activities:
+            turn?.status === "failed" && errorMessage
+              ? appendSegmentActivity(segment.activities, "error", `Turn failed: ${errorMessage}`)
+              : segment.activities,
         }));
         if (turn?.status === "failed" && errorMessage) {
           appendCodexMessage({
