@@ -379,7 +379,7 @@ function formatStatusLabel(value: string) {
 
 function isPaneOnlyQuery(search: string) {
   const params = new URLSearchParams(search);
-  return params.get("embed") === "panes" || params.get("panesOnly") === "1";
+  return params.get("embed") === "true";
 }
 
 function TimestampLabel({ timestamp, className = "" }: { timestamp: string; className?: string }) {
