@@ -105,6 +105,8 @@ async function routeIntentWithServerModel(payload: {
   message: string
   codexRunning: boolean
   latestCodexReply?: string | null
+  currentCodexStatus?: string | null
+  latestSegmentMessages?: Array<{ role: string; text: string; status?: string; eventKind?: string | null }>
   recentConversation?: Array<{ role: string; text: string }>
 }) {
   if (!process.env.OPENAI_API_KEY) {
@@ -133,11 +135,13 @@ async function routeIntentWithServerModel(payload: {
               'Prefer codex_interrupt only when the user clearly redirects or replaces in-flight Codex work.',
               'Prefer chat_only only for casual conversation, generic knowledge, or pure voice-control requests like "stop", "stop yapping", "be quiet", or similar.',
               'If the user asks what Codex is doing right now, current progress, current status, or similar, use action=chat_only and chat_mode=relay_codex_status.',
+              'If the user asks why Codex responded a certain way, why it clarified, what happened in the current run, whether it was interrupted, or similar meta-questions about active Codex behavior, use action=chat_only and chat_mode=relay_codex_status.',
               'If the user asks to hear, repeat, summarize, or relay the latest Codex result, use action=chat_only and chat_mode=relay_latest_codex.',
               'Never invent project facts. If the question is about the local project, Codex should inspect it.',
               'If there is any meaningful uncertainty about whether the answer depends on local project context, choose Codex rather than chat_only.',
               'Do not let realtime answer from generic software knowledge when the user appears to mean this specific project.',
               'If the intent is ambiguous between generic knowledge and this project, prefer Codex or ask for clarification rather than allowing a guessed project answer.',
+              'Treat currentCodexStatus and latestSegmentMessages as the source of truth for the active Codex segment. Do not over-focus on latestCodexReply when the user is asking about current behavior, timeline, or why something happened.',
               'Examples that MUST route to Codex: "tell me about our todo app", "what files do we have", "how is this implemented", "what did Codex build", "explain this project".',
               'Examples that should use relay_codex_status: "what is it doing right now", "what is Codex doing rn", "summarize current Codex activity".',
               'Examples that can stay chat_only: "stop", "thanks", "what is React", "explain CRUD generally".',
@@ -343,6 +347,8 @@ function codexProxyPlugin(): Plugin {
             message?: string
             codexRunning?: boolean
             latestCodexReply?: string | null
+            currentCodexStatus?: string | null
+            latestSegmentMessages?: Array<{ role: string; text: string; status?: string; eventKind?: string | null }>
             recentConversation?: Array<{ role: string; text: string }>
           }
           if (!body.message?.trim()) {
@@ -355,6 +361,8 @@ function codexProxyPlugin(): Plugin {
             message: body.message,
             codexRunning: Boolean(body.codexRunning),
             latestCodexReply: body.latestCodexReply ?? null,
+            currentCodexStatus: body.currentCodexStatus ?? null,
+            latestSegmentMessages: body.latestSegmentMessages ?? [],
             recentConversation: body.recentConversation ?? [],
           })
           res.statusCode = 200

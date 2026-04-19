@@ -98,6 +98,66 @@ function summarizeRecentCommands(agentEvents: AgentEvent[]) {
   return `Read ${paths.slice(0, -1).join(", ")}, and ${paths.at(-1)}.`;
 }
 
+function getMessagesSinceLatestHandoff(codexMessages: CodexMessage[]) {
+  const boundaryTimestamp = getLatestHandoffBoundary(codexMessages);
+  return boundaryTimestamp
+    ? codexMessages.filter((message) => message.timestamp >= boundaryTimestamp)
+    : codexMessages;
+}
+
+function getEventsSinceLatestHandoff(agentEvents: AgentEvent[], codexMessages: CodexMessage[]) {
+  const boundaryTimestamp = getLatestHandoffBoundary(codexMessages);
+  return boundaryTimestamp
+    ? agentEvents.filter((event) => event.timestamp >= boundaryTimestamp)
+    : agentEvents;
+}
+
+function isCodexProgressMessage(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  return (
+    trimmed.startsWith("Plan update") ||
+    trimmed.startsWith("Completed:") ||
+    trimmed.startsWith("Running:") ||
+    trimmed.startsWith("Failed (") ||
+    trimmed.startsWith("Turn failed:")
+  );
+}
+
+function messageRequestsUserInput(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed || isCodexProgressMessage(trimmed)) return false;
+  if (trimmed.includes("?")) return true;
+
+  const lowered = trimmed.toLowerCase();
+  return [
+    "could you clarify",
+    "can you clarify",
+    "please clarify",
+    "need clarity",
+    "need more direction",
+    "need more detail",
+    "which ",
+    "what kind",
+    "what would you like",
+    "what do you want",
+    "let me know if",
+    "if you want me to",
+  ].some((phrase) => lowered.includes(phrase));
+}
+
+function getLatestSubstantiveAssistantMessage(codexMessages: CodexMessage[]) {
+  return [...codexMessages]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === "assistant" &&
+        message.status === "final" &&
+        message.text.trim() &&
+        !isCodexProgressMessage(message.text),
+    );
+}
+
 function getLatestHandoffBoundary(codexMessages: CodexMessage[]) {
   return [...codexMessages]
     .reverse()
@@ -113,30 +173,33 @@ function summarizeCurrentCodexActivity(
   agentEvents: AgentEvent[],
   codexMessages: CodexMessage[],
 ) {
-  const boundaryTimestamp = getLatestHandoffBoundary(codexMessages);
-  const scopedEvents = boundaryTimestamp
-    ? agentEvents.filter((event) => event.timestamp >= boundaryTimestamp)
-    : agentEvents;
-  const scopedMessages = boundaryTimestamp
-    ? codexMessages.filter((message) => message.timestamp >= boundaryTimestamp)
-    : codexMessages;
+  const scopedEvents = getEventsSinceLatestHandoff(agentEvents, codexMessages);
+  const scopedMessages = getMessagesSinceLatestHandoff(codexMessages);
 
   const recentEvents = [...scopedEvents].reverse();
   const latestPlan = recentEvents.find((event) => event.method === "turn/plan/updated");
   const recentCommandSummary = summarizeRecentCommands(scopedEvents);
+  const latestSubstantiveAssistant = getLatestSubstantiveAssistantMessage(scopedMessages);
 
   if (activeTurnStatus !== "running") {
-    const latestCodexReply = [...scopedMessages]
-      .reverse()
-      .find((message) => message.role === "assistant" && message.status === "final" && message.text.trim());
+    if (latestSubstantiveAssistant && messageRequestsUserInput(latestSubstantiveAssistant.text)) {
+      const firstLine =
+        latestSubstantiveAssistant.text.trim().split("\n").find(Boolean) ?? latestSubstantiveAssistant.text.trim();
+      if (recentCommandSummary) {
+        return `Codex is waiting for input. ${recentCommandSummary} It asked: ${firstLine}`.slice(0, 420);
+      }
+      return `Codex is waiting for input. It asked: ${firstLine}`.slice(0, 360);
+    }
 
-    if (recentCommandSummary && latestCodexReply) {
-      const firstLine = latestCodexReply.text.trim().split("\n").find(Boolean) ?? latestCodexReply.text.trim();
+    if (recentCommandSummary && latestSubstantiveAssistant) {
+      const firstLine =
+        latestSubstantiveAssistant.text.trim().split("\n").find(Boolean) ?? latestSubstantiveAssistant.text.trim();
       return `Codex is idle. ${recentCommandSummary} Latest result: ${firstLine}`.slice(0, 420);
     }
 
-    if (latestCodexReply) {
-      const firstLine = latestCodexReply.text.trim().split("\n").find(Boolean) ?? latestCodexReply.text.trim();
+    if (latestSubstantiveAssistant) {
+      const firstLine =
+        latestSubstantiveAssistant.text.trim().split("\n").find(Boolean) ?? latestSubstantiveAssistant.text.trim();
       return `Codex is idle. Latest result: ${firstLine}`.slice(0, 320);
     }
 
@@ -145,6 +208,15 @@ function summarizeCurrentCodexActivity(
     }
 
     return "Codex is idle right now.";
+  }
+
+  if (latestSubstantiveAssistant && messageRequestsUserInput(latestSubstantiveAssistant.text)) {
+    const firstLine =
+      latestSubstantiveAssistant.text.trim().split("\n").find(Boolean) ?? latestSubstantiveAssistant.text.trim();
+    if (recentCommandSummary) {
+      return `Codex is blocked on user input. ${recentCommandSummary} It asked: ${firstLine}`.slice(0, 420);
+    }
+    return `Codex is blocked on user input. It asked: ${firstLine}`.slice(0, 360);
   }
 
   const latestCommand = recentEvents.find(
@@ -675,6 +747,7 @@ export default function App() {
   const queuedInterruptReplacementRef = useRef<string | null>(null);
   const pendingCodexNarrationRef = useRef<{ request: string; turnId?: string | null } | null>(null);
   const lastNarratedCodexMessageIdRef = useRef<string | null>(null);
+  const lastRelayedBlockingCodexMessageIdRef = useRef<string | null>(null);
   const codexBootstrapAttemptedRef = useRef(false);
   const realtimeBootstrapAttemptedRef = useRef(false);
   const [threadError, setThreadError] = useState<string | null>(null);
@@ -683,6 +756,15 @@ export default function App() {
     const latestCodexReply = [...codexMessages]
       .reverse()
       .find((entry) => entry.role === "assistant" && entry.status === "final");
+    const currentCodexStatus = summarizeCurrentCodexActivity(activeTurnStatus, agentEvents, codexMessages);
+    const latestSegmentMessages = getMessagesSinceLatestHandoff(codexMessages)
+      .slice(-6)
+      .map((entry) => ({
+        role: entry.role,
+        text: entry.text,
+        status: entry.status,
+        eventKind: entry.eventKind ?? null,
+      }));
     const recentConversation = realtimeMessages
       .slice(-6)
       .map((entry) => ({ role: entry.role, text: entry.text }));
@@ -696,6 +778,8 @@ export default function App() {
         message,
         codexRunning,
         latestCodexReply: latestCodexReply?.text ?? null,
+        currentCodexStatus,
+        latestSegmentMessages,
         recentConversation,
       }),
     });
@@ -892,6 +976,7 @@ export default function App() {
       if (activeTurnStatus === "idle") {
         pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, turnId: null };
         await startTurn(activeThread.id, latestFinalUserMessage.text);
+        lastRelayedBlockingCodexMessageIdRef.current = null;
         addSystemMessage("new turn", "start");
         addRealtimeSystemMessage("new turn", "start");
       }
@@ -918,6 +1003,39 @@ export default function App() {
     steerTurn,
     thread,
   ]);
+
+  useEffect(() => {
+    const latestBlockingMessage = [...getMessagesSinceLatestHandoff(codexMessages)]
+      .reverse()
+      .find(
+        (message) =>
+          message.role === "assistant" &&
+          message.status === "final" &&
+          message.text.trim() &&
+          messageRequestsUserInput(message.text),
+      );
+
+    if (!latestBlockingMessage) return;
+    if (lastRelayedBlockingCodexMessageIdRef.current === latestBlockingMessage.id) return;
+
+    lastRelayedBlockingCodexMessageIdRef.current = latestBlockingMessage.id;
+
+    if (
+      pendingCodexNarrationRef.current &&
+      (!pendingCodexNarrationRef.current.turnId || pendingCodexNarrationRef.current.turnId === latestBlockingMessage.turnId)
+    ) {
+      pendingCodexNarrationRef.current = null;
+    }
+
+    try {
+      sendRealtimeText(
+        `Codex needs user input. Relay this briefly and clearly as a short spoken question. Do not add anything. Do not summarize unrelated work.\n\nCodex message:\n${latestBlockingMessage.text}`,
+        { requestResponse: true, visible: false },
+      );
+    } catch (error) {
+      console.error(error);
+    }
+  }, [codexMessages, sendRealtimeText]);
 
   useEffect(() => {
     if (!pendingCodexNarrationRef.current) return;
