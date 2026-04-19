@@ -596,17 +596,12 @@ function CodexConversationPanel({
             ))
           )}
           {workingLabel ? (
-            <div className="py-2">
-              <div className="space-y-1 mr-12">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                  <span className="text-[#d8f5ab]">segment {activeSegment?.mode}</span>
-                  <span>{workingLabel}</span>
-                  {activeSegment ? <TimestampLabel timestamp={activeSegment.updatedAt} /> : null}
-                </div>
-                <div className="inline-flex max-w-[92%] items-center gap-2 rounded-2xl border border-[#b9f075]/15 bg-[#b9f075]/8 px-3.5 py-2 text-sm leading-6 text-[#e6f7c9] shadow-[0_0_0_1px_rgba(185,240,117,0.04)]">
-                  <span className="size-2 rounded-full bg-[#b9f075] shadow-[0_0_10px_rgba(185,240,117,0.45)]" />
-                  <span>{workingLabel}</span>
-                </div>
+            <div className="py-1.5">
+              <div className="mr-12 flex min-h-6 items-center gap-3 overflow-hidden rounded-full border border-[#b9f075]/10 bg-[#b9f075]/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                <span className="shrink-0 font-medium text-[#d8f5ab]">segment {activeSegment?.mode}</span>
+                <span className="size-1.5 shrink-0 rounded-full bg-[#b9f075] shadow-[0_0_8px_rgba(185,240,117,0.4)]" />
+                <span className="min-w-0 flex-1 truncate text-zinc-300">{workingLabel}</span>
+                {activeSegment ? <TimestampLabel timestamp={activeSegment.updatedAt} className="shrink-0" /> : null}
               </div>
             </div>
           ) : null}
