@@ -771,21 +771,21 @@ export default function App() {
                     ) : null}
                   </div>
 
-                  <div className="flex items-center gap-3 rounded-[1.6rem] border border-white/8 bg-[#202824]/70 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                  <div className="flex items-center gap-2.5 rounded-[1.45rem] border border-white/8 bg-[#202824]/70 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                     <Button
                       size="icon-lg"
-                      className="size-14 shrink-0 rounded-[1.15rem] border border-[#d6ff96]/35 bg-[#b9f075] text-[#213024] shadow-[0_10px_24px_rgba(185,240,117,0.18)] hover:bg-[#c9f589]"
+                      className="size-12 shrink-0 rounded-[1rem] border border-[#d6ff96]/35 bg-[#b9f075] text-[#213024] shadow-[0_8px_20px_rgba(185,240,117,0.16)] hover:bg-[#c9f589]"
                       onClick={toggleMicMuted}
                       disabled={realtimeStatus !== "active"}
                       title={isMicMuted ? "Unmute Mic" : "Mute Mic"}
                     >
-                      {isMicMuted ? <Mic className="size-5" /> : <MicOff className="size-5" />}
+                      {isMicMuted ? <Mic className="size-4.5" /> : <MicOff className="size-4.5" />}
                     </Button>
                     <Input
                       ref={realtimeInputRef}
                       value={realtimeText}
                       onChange={(event) => setRealtimeText(event.target.value)}
-                      className="h-14 flex-1 rounded-[1.25rem] border-white/10 bg-[#1f2623] px-6 text-[1.02rem] text-zinc-100 placeholder:text-zinc-500 focus-visible:border-[#b9f075]/35 focus-visible:ring-[#b9f075]/15"
+                      className="h-12 flex-1 rounded-[1.1rem] border-white/10 bg-[#1f2623] px-5 text-[0.98rem] text-zinc-100 placeholder:text-zinc-500 focus-visible:border-[#b9f075]/35 focus-visible:ring-[#b9f075]/15"
                       placeholder="Type to the realtime session"
                       onKeyDown={(event) => {
                         if ((event.key === "Enter" && !event.shiftKey) || ((event.metaKey || event.ctrlKey) && event.key === "Enter")) {
@@ -800,21 +800,21 @@ export default function App() {
                     <Button
                       size="icon-lg"
                       variant="outline"
-                      className="size-14 shrink-0 rounded-[1.15rem] border-white/10 bg-[#1f2623] text-zinc-100 hover:bg-[#252d29]"
+                      className="size-12 shrink-0 rounded-[1rem] border-white/10 bg-[#1f2623] text-zinc-100 hover:bg-[#252d29]"
                       onClick={handleSendRealtimeText}
                       disabled={realtimeStatus !== "active"}
                       title="Send Text"
                     >
-                      <Send className="size-5" />
+                      <Send className="size-4.5" />
                     </Button>
                     <Button
                       size="icon-lg"
                       variant="destructive"
-                      className="size-14 shrink-0 rounded-[1.15rem] border-red-500/22 bg-[#5a2e28] text-red-100 hover:bg-[#6a342d]"
+                      className="size-12 shrink-0 rounded-[1rem] border-red-500/22 bg-[#5a2e28] text-red-100 hover:bg-[#6a342d]"
                       onClick={() => disconnectRealtime()}
                       title="Stop Realtime"
                     >
-                      <Square className="size-5" />
+                      <Square className="size-4.5" />
                     </Button>
                   </div>
                 </>
