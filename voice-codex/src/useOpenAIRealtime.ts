@@ -163,6 +163,19 @@ export function useOpenAIRealtime() {
     addLog("client", "response.create", JSON.stringify(responseEvent, null, 2));
   }, [addLog]);
 
+  const cancelAssistantResponse = useCallback(() => {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== "open") {
+      throw new Error("OpenAI Realtime data channel is not open");
+    }
+
+    const cancelEvent = { type: "response.cancel" };
+    dc.send(JSON.stringify(cancelEvent));
+    addLog("client", "response.cancel", JSON.stringify(cancelEvent, null, 2));
+    clearAssistantSpeakingTimeout();
+    setIsAssistantSpeaking(false);
+  }, [addLog, clearAssistantSpeakingTimeout]);
+
   const connect = useCallback(
     async ({ model, voice, instructions }: ConnectOptions) => {
       disconnect();
@@ -390,6 +403,14 @@ export function useOpenAIRealtime() {
       }
 
       const { requestResponse: shouldRequestResponse = true, visible = true } = options;
+
+      // Hard-interrupt any previous assistant reply before queuing the next user turn.
+      try {
+        cancelAssistantResponse();
+      } catch {
+        // If cancel cannot be sent, continue with the new user message.
+      }
+
       const userEvent = {
         type: "conversation.item.create",
         item: {
@@ -421,7 +442,7 @@ export function useOpenAIRealtime() {
         ]);
       }
     },
-    [addLog],
+    [addLog, cancelAssistantResponse],
   );
 
   const setMicMuted = useCallback((muted: boolean) => {
@@ -441,17 +462,8 @@ export function useOpenAIRealtime() {
   }, [isMicMuted, setMicMuted]);
 
   const skipAssistant = useCallback(() => {
-    const dc = dcRef.current;
-    if (!dc || dc.readyState !== "open") {
-      throw new Error("OpenAI Realtime data channel is not open");
-    }
-
-    const cancelEvent = { type: "response.cancel" };
-    dc.send(JSON.stringify(cancelEvent));
-    addLog("client", "response.cancel", JSON.stringify(cancelEvent, null, 2));
-    clearAssistantSpeakingTimeout();
-    setIsAssistantSpeaking(false);
-  }, [addLog, clearAssistantSpeakingTimeout]);
+    cancelAssistantResponse();
+  }, [cancelAssistantResponse]);
 
   useEffect(() => {
     if (!connectedAt) return;
@@ -483,5 +495,6 @@ export function useOpenAIRealtime() {
     toggleMicMuted,
     isAssistantSpeaking,
     skipAssistant,
+    cancelAssistantResponse,
   };
 }

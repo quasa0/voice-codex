@@ -754,19 +754,31 @@ export default function App() {
                 </div>
               ) : (
                 <>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge className={`gap-2 ${panelBadgeClass()}`}>
-                      <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
-                      {realtimeStatus}
-                    </Badge>
-                    <Badge variant="outline" className={panelBadgeClass()}>
-                      {realtimeConnectedAt ? formatDuration(realtimeElapsedSeconds) : "--:--"}
-                    </Badge>
-                    {realtimeLastError ? (
-                      <Badge variant="outline" className="max-w-full border-red-500/20 bg-red-950/20 text-red-200">
-                        {realtimeLastError}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge className={`gap-2 ${panelBadgeClass()}`}>
+                        <span className={`size-1.5 rounded-full ${statusDotClass(realtimeStatus)}`} />
+                        {realtimeStatus}
                       </Badge>
-                    ) : null}
+                      <Badge variant="outline" className={panelBadgeClass()}>
+                        {realtimeConnectedAt ? formatDuration(realtimeElapsedSeconds) : "--:--"}
+                      </Badge>
+                      {realtimeLastError ? (
+                        <Badge variant="outline" className="max-w-full border-red-500/20 bg-red-950/20 text-red-200">
+                          {realtimeLastError}
+                        </Badge>
+                      ) : null}
+                    </div>
+
+                    <Button
+                      variant="destructive"
+                      className="h-10 rounded-full border-red-500/22 bg-[#5a2e28] px-4 text-red-100 hover:bg-[#6a342d]"
+                      onClick={() => disconnectRealtime()}
+                      title="End call"
+                    >
+                      <Square className="size-4" />
+                      End call
+                    </Button>
                   </div>
 
                   <div className="flex items-center gap-2.5 rounded-[1.45rem] border border-white/8 bg-[#202824]/70 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
@@ -831,18 +843,6 @@ export default function App() {
                   {realtimeError}
                 </div>
               ) : null}
-
-              <div className="flex justify-end">
-                <Button
-                  variant="destructive"
-                  className="h-10 rounded-full border-red-500/22 bg-[#5a2e28] px-4 text-red-100 hover:bg-[#6a342d]"
-                  onClick={() => disconnectRealtime()}
-                  title="End call"
-                >
-                  <Square className="size-4" />
-                  End call
-                </Button>
-              </div>
 
               <ConversationPanel messages={realtimeMessages} />
             </PanelShell>
