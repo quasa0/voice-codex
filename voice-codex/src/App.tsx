@@ -358,7 +358,7 @@ function RealtimeStatusBadge({
   const active = realtimeStatus === "active";
 
   return (
-    <div className="flex items-center gap-3 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+    <div className="flex w-[150px] items-center gap-3 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
       <div className="w-[52px]">
         <RealtimeWaveBars isMuted={isMuted} isActive={active} compact />
       </div>
@@ -422,7 +422,7 @@ function CodexStatusBadge({ codexState }: { codexState: CodexSegmentState }) {
           : codexState;
 
   return (
-    <div className="flex items-center gap-3 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+    <div className="flex w-[150px] items-center gap-3 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
       <CodexStatusGlyph codexState={codexState} />
       <div className="space-y-0.5">
         <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">codex</div>
