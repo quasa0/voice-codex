@@ -1,0 +1,15 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <id>com.github.quasa0.realtimecodexinwebstormplugin</id>
+    <name>realtime-codex-in-webstorm-plugin</name>
+    <vendor>quasa0</vendor>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <resource-bundle>messages.MyBundle</resource-bundle>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow factoryClass="com.github.quasa0.realtimecodexinwebstormplugin.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
+        <postStartupActivity implementation="com.github.quasa0.realtimecodexinwebstormplugin.startup.MyProjectActivity" />
+    </extensions>
+</idea-plugin>
