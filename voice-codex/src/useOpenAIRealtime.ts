@@ -17,13 +17,14 @@ export interface OpenAIRealtimeMessage {
   status: "capturing" | "partial" | "streaming" | "final";
   source: "voice" | "text" | "voice-pending";
   timestamp: string;
-  eventKind?: "start" | "steer" | "interrupt";
+  eventKind?: "start" | "steer" | "interrupt" | "interrupted" | "refreshed";
 }
 
 interface ConnectOptions {
   model: string;
   voice: string;
   instructions?: string;
+  preserveHistory?: boolean;
 }
 
 interface SendTextOptions {
@@ -34,7 +35,13 @@ interface SendTextOptions {
 let nextRealtimeLogId = 1;
 
 function now() {
-  return new Date().toISOString().slice(11, 23);
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 2,
+    hour12: false,
+  }).format(new Date());
 }
 
 function summarizeEvent(event: unknown) {
@@ -61,12 +68,17 @@ const IDE_FOCUS_FILE_TOOL = {
   },
 } as const;
 
-export function useOpenAIRealtime() {
+interface UseOpenAIRealtimeOptions {
+  initialMessages?: OpenAIRealtimeMessage[];
+  initialLogs?: OpenAIRealtimeLogEntry[];
+}
+
+export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const [status, setStatus] = useState<OpenAIRealtimeStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
-  const [logs, setLogs] = useState<OpenAIRealtimeLogEntry[]>([]);
-  const [messages, setMessages] = useState<OpenAIRealtimeMessage[]>([]);
+  const [logs, setLogs] = useState<OpenAIRealtimeLogEntry[]>(() => options.initialLogs ?? []);
+  const [messages, setMessages] = useState<OpenAIRealtimeMessage[]>(() => options.initialMessages ?? []);
   const [isMicMuted, setIsMicMuted] = useState(true);
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -83,6 +95,7 @@ export function useOpenAIRealtime() {
   const assistantHiddenResponseSeqByItemRef = useRef<Map<string, number>>(new Map());
   const isMicMutedRef = useRef(true);
   const assistantSpeakingTimeoutRef = useRef<number | null>(null);
+  const isAssistantSpeakingRef = useRef(false);
   const pendingFunctionCallArgsRef = useRef<Map<string, string>>(new Map());
 
   const clearAssistantSpeakingTimeout = useCallback(() => {
@@ -96,11 +109,13 @@ export function useOpenAIRealtime() {
     clearAssistantSpeakingTimeout();
 
     if (speaking || delayMs <= 0) {
+      isAssistantSpeakingRef.current = speaking;
       setIsAssistantSpeaking(speaking);
       return;
     }
 
     assistantSpeakingTimeoutRef.current = window.setTimeout(() => {
+      isAssistantSpeakingRef.current = false;
       setIsAssistantSpeaking(false);
       assistantSpeakingTimeoutRef.current = null;
     }, delayMs);
@@ -225,6 +240,10 @@ export function useOpenAIRealtime() {
     ]);
   }, []);
 
+  const addAssistantInterruptedMessage = useCallback(() => {
+    addSystemMessage("interrupted", "interrupted");
+  }, [addSystemMessage]);
+
   const disconnect = useCallback((nextStatus: OpenAIRealtimeStatus = "idle") => {
     dcRef.current?.close();
     dcRef.current = null;
@@ -244,6 +263,7 @@ export function useOpenAIRealtime() {
     setConnectedAt(null);
     setElapsedSeconds(0);
     clearAssistantSpeakingTimeout();
+    isAssistantSpeakingRef.current = false;
     setIsAssistantSpeaking(false);
 
     setStatus(nextStatus);
@@ -263,12 +283,14 @@ export function useOpenAIRealtime() {
   }, [clearAssistantSpeakingTimeout, finalizeStreamingAssistantMessages, sendClientEvent]);
 
   const connect = useCallback(
-    async ({ model, voice, instructions }: ConnectOptions) => {
+    async ({ model, voice, instructions, preserveHistory = false }: ConnectOptions) => {
       disconnect();
       setError(null);
       setLastError(null);
-      setLogs([]);
-      setMessages([]);
+      if (!preserveHistory) {
+        setLogs([]);
+        setMessages([]);
+      }
       setStatus("requesting-mic");
       pendingHiddenResponseSeqRef.current = null;
       hiddenResponseSeqRef.current = 0;
@@ -340,6 +362,9 @@ export function useOpenAIRealtime() {
 
           if (type === "input_audio_buffer.committed") {
             const itemId = String(parsed.item_id ?? "");
+            if (isAssistantSpeakingRef.current) {
+              addAssistantInterruptedMessage();
+            }
             if (itemId && !isMicMutedRef.current) {
               upsertUserVoiceMessage(itemId, "Listening...", "capturing", "voice-pending");
             }
@@ -545,7 +570,7 @@ export function useOpenAIRealtime() {
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
       addLog("meta", "webrtc-answer", "Accepted OpenAI Realtime SDP answer");
     },
-    [addLog, disconnect, focusFileInIde, removePendingVoiceMessage, sendClientEvent, setAssistantSpeakingWithGrace, submitToolResult, upsertUserVoiceMessage],
+    [addAssistantInterruptedMessage, addLog, disconnect, focusFileInIde, removePendingVoiceMessage, sendClientEvent, setAssistantSpeakingWithGrace, submitToolResult, upsertUserVoiceMessage],
   );
 
   const sendText = useCallback(
@@ -555,6 +580,9 @@ export function useOpenAIRealtime() {
 
       // Hard-interrupt any previous assistant reply before queuing the next user turn.
       try {
+        if (visible && isAssistantSpeakingRef.current) {
+          addAssistantInterruptedMessage();
+        }
         cancelAssistantResponse();
       } catch {
         // If cancel cannot be sent, continue with the new user message.
@@ -596,7 +624,7 @@ export function useOpenAIRealtime() {
         ]);
       }
     },
-    [cancelAssistantResponse, sendClientEvent],
+    [addAssistantInterruptedMessage, cancelAssistantResponse, sendClientEvent],
   );
 
   const setMicMuted = useCallback((muted: boolean) => {
@@ -616,8 +644,11 @@ export function useOpenAIRealtime() {
   }, [isMicMuted, setMicMuted]);
 
   const skipAssistant = useCallback(() => {
+    if (isAssistantSpeakingRef.current) {
+      addAssistantInterruptedMessage();
+    }
     cancelAssistantResponse();
-  }, [cancelAssistantResponse]);
+  }, [addAssistantInterruptedMessage, cancelAssistantResponse]);
 
   useEffect(() => {
     if (!connectedAt) return;

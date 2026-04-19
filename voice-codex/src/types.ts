@@ -89,7 +89,9 @@ export interface CodexSegment {
   codexState: CodexSegmentState;
   relayState: CodexRelayState;
   createdAt: string;
+  createdAtMs: number;
   updatedAt: string;
+  updatedAtMs: number;
   turnId?: string | null;
   latestMilestone: string | null;
   blockingQuestion: string | null;
@@ -98,6 +100,8 @@ export interface CodexSegment {
   filesEdited: string[];
   commandsRun: string[];
   activities: CodexSegmentActivity[];
+  lastUserCheckInAt: string | null;
+  lastRelayedActivityIndex: number;
 }
 
 declare global {
@@ -108,5 +112,6 @@ declare global {
       focusFile?: (payload: { path: string; lineStart?: number; lineEnd?: number }) => void;
     };
     __VOICE_CODEX_EXPORT_TEXT__?: () => string;
+    __VOICE_CODEX_COPY_LOGS__?: () => string;
   }
 }

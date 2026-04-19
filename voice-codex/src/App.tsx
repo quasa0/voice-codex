@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { Activity, Cable, Mic, MicOff, PhoneOff, Play, Radio, Send, SkipForward, TerminalSquare, WandSparkles } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Activity, Copy, Mic, MicOff, PhoneOff, Play, Radio, Send, SkipForward, TerminalSquare, Trash2 } from "lucide-react";
 import { useCodexWebSocket } from "./useCodexWebSocket";
 import { useOpenAIRealtime } from "./useOpenAIRealtime";
 import type { OpenAIRealtimeStatus } from "./useOpenAIRealtime";
@@ -52,7 +52,7 @@ type RealtimeMessage = {
   status: "capturing" | "partial" | "streaming" | "final";
   source: "voice" | "text" | "voice-pending";
   timestamp: string;
-  eventKind?: "start" | "steer" | "interrupt";
+  eventKind?: "start" | "steer" | "interrupt" | "interrupted" | "refreshed";
 };
 
 type CodexIntentAction = "chat_only" | "codex_start" | "codex_steer" | "codex_interrupt";
@@ -61,6 +61,228 @@ type RoutedIntent = {
   chat_mode: "normal" | "relay_latest_codex" | "relay_codex_status";
   reason: string;
 };
+
+type DebugNote = {
+  timestamp: string;
+  label: string;
+  detail?: string;
+};
+
+const STORAGE_KEYS = {
+  realtimeMessages: "voice-codex.realtime.messages",
+  realtimeLogs: "voice-codex.realtime.logs",
+  codexMessages: "voice-codex.codex.messages",
+  codexLog: "voice-codex.codex.log",
+  codexEvents: "voice-codex.codex.events",
+  codexSegments: "voice-codex.codex.segments",
+  reconnectIntent: "voice-codex.reconnect.intent",
+} as const;
+
+const PERSIST_LIMITS = {
+  realtimeMessages: 80,
+  realtimeLogs: 120,
+  codexMessages: 120,
+  codexLog: 120,
+  codexEvents: 120,
+  codexSegments: 24,
+} as const;
+
+const REALTIME_CONNECT_INSTRUCTIONS =
+  `You are voice coding assistant inside an already-open software project. Project workspace already known and connected to Codex. Do not ask user for repo name, folder, project structure, or what files exist unless truly impossible. For requests about files, codebase structure, repo contents, implementation details, or inspection, default to delegating to Codex. If the user asks to show, open, reveal, or focus a file in the IDE, use the focus_file_in_ide tool instead of only describing the file. Do not claim you already queried Codex unless frontend actually dispatched Codex work. If delegation not yet confirmed, say brief handoff like "Checking Codex now." Never make up project facts, implementation details, files, components, APIs, or what Codex built. If the answer is unclear from explicit context already provided in conversation, say you need to check Codex or ask a brief clarifying question instead of guessing. Use user only for product intent, ambiguity, or preference decisions. If user asks what you remember after a refresh, answer clearly that this is a fresh voice session and you only remember messages since reload. Speak only English unless user explicitly asks another language. Wait until user finishes speaking before replying. ${TERSE_AGENT_STYLE}`;
+const PAGE_REFRESH_MARKER_LOAD_KEY = "voice-codex.realtime.page-refresh-load-id";
+const PAGE_REFRESH_MARKER_REAL_MESSAGE_KEY = "voice-codex.realtime.page-refresh-real-message-id";
+
+function formatNowLocal(fractionalSecondDigits: 0 | 1 | 2 | 3 = 2) {
+  if (fractionalSecondDigits === 0) {
+    return new Intl.DateTimeFormat(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(new Date());
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits,
+    hour12: false,
+  }).format(new Date());
+}
+
+type PersistedReconnectIntent = {
+  shouldReconnectRealtime: boolean;
+};
+
+function buildRealtimeConnectInstructions(messages: RealtimeMessage[]) {
+  const recentTranscript = messages
+    .filter(
+      (message) =>
+        (message.role === "user" || message.role === "assistant") &&
+        message.status === "final" &&
+        message.text.trim(),
+    )
+    .slice(-12)
+    .map((message) => {
+      const speaker = message.role === "user" ? "User" : "Assistant";
+      const text = message.text.replace(/\s+/g, " ").trim().slice(0, 220);
+      return `${speaker}: ${text}`;
+    });
+
+  if (recentTranscript.length === 0) {
+    return REALTIME_CONNECT_INSTRUCTIONS;
+  }
+
+  return [
+    REALTIME_CONNECT_INSTRUCTIONS,
+    "",
+    "Page refreshed. Transcript below restored from UI history only.",
+    "Use it as context. Do not greet, summarize, or answer this restore by itself.",
+    "Wait for the next user turn before speaking.",
+    "",
+    "Recent transcript:",
+    ...recentTranscript,
+  ].join("\n");
+}
+
+function normalizePersistedRealtimeMessages(messages: RealtimeMessage[]) {
+  return messages.map((message) => {
+    if (message.role === "assistant" && message.status === "streaming") {
+      return {
+        ...message,
+        status: "final" as const,
+      };
+    }
+
+    if (message.role === "user" && (message.status === "capturing" || message.status === "partial")) {
+      return {
+        ...message,
+        status: "final" as const,
+      };
+    }
+
+    return message;
+  });
+}
+
+function readStoredJson<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredJson<T>(key: string, value: T) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage quota/transient errors.
+  }
+}
+
+function normalizeCodexDispatchText(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+
+  const normalized = trimmed
+    .replace(/^(?:please\s+)?(?:can you|could you|would you)\s+/i, "")
+    .replace(/^(?:please\s+)?ask\s+codex\s+to\s+/i, "")
+    .replace(/^(?:please\s+)?ask\s+(?:it|him|the agent|the coding agent)\s+to\s+/i, "")
+    .replace(/^(?:please\s+)?tell\s+codex\s+to\s+/i, "")
+    .replace(/^(?:please\s+)?tell\s+(?:it|him|the agent|the coding agent)\s+to\s+/i, "")
+    .replace(/^(?:please\s+)?have\s+codex\s+/i, "")
+    .replace(/^(?:please\s+)?have\s+(?:it|him|the agent|the coding agent)\s+/i, "")
+    .replace(/^(?:please\s+)?get\s+codex\s+to\s+/i, "")
+    .replace(/^(?:please\s+)?get\s+(?:it|him|the agent|the coding agent)\s+to\s+/i, "")
+    .replace(/^(?:please\s+)?make\s+codex\s+/i, "")
+    .replace(/^(?:please\s+)?make\s+(?:it|him|the agent|the coding agent)\s+/i, "")
+    .replace(/^(?:please\s+)?interrupt\s+codex\s+and\s+/i, "")
+    .replace(/^(?:please\s+)?interrupt\s+(?:it|him|the agent|the coding agent)\s+and\s+/i, "")
+    .replace(/^codex[:,]?\s+/i, "")
+    .trim();
+
+  if (!normalized) return trimmed;
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function segmentHasMeaningfulSummary(segment: CodexSegment | null) {
+  if (!segment) return false;
+  return Boolean(
+    getSegmentFirstLine(segment.blockingQuestion) ||
+    getSegmentFirstLine(segment.finalOutcome) ||
+    getSegmentFirstLine(segment.latestMilestone) ||
+    segment.filesRead.length ||
+    segment.filesEdited.length ||
+    segment.activities.length,
+  );
+}
+
+function segmentLooksStale(segment: CodexSegment | null, activeTurnStatus: "idle" | "running" | "error") {
+  if (!segment || segment.codexState !== "running") return false;
+  if (activeTurnStatus === "running") return false;
+  return Date.now() - segment.updatedAtMs > 45_000;
+}
+
+function findPreferredSegment(
+  segments: CodexSegment[],
+  activeTurnStatus: "idle" | "running" | "error",
+) {
+  const newestWaiting = [...segments]
+    .reverse()
+    .find((segment) => segment.codexState === "waiting_for_user" && Boolean(getSegmentFirstLine(segment.blockingQuestion)));
+  if (newestWaiting) return newestWaiting;
+
+  const newestHealthyRunning = [...segments]
+    .reverse()
+    .find((segment) => segment.codexState === "running" && !segmentLooksStale(segment, activeTurnStatus));
+  if (newestHealthyRunning) return newestHealthyRunning;
+
+  const newestMeaningfulTerminal = [...segments]
+    .reverse()
+    .find((segment) => (segment.codexState === "completed" || segment.codexState === "failed") && segmentHasMeaningfulSummary(segment));
+  if (newestMeaningfulTerminal) return newestMeaningfulTerminal;
+
+  const newestMeaningfulAny = [...segments].reverse().find((segment) => segmentHasMeaningfulSummary(segment));
+  return newestMeaningfulAny ?? segments.at(-1) ?? null;
+}
+
+function findSupersedingSegment(segments: CodexSegment[], targetSegment: CodexSegment) {
+  const targetIndex = segments.findIndex((segment) => segment.id === targetSegment.id);
+  if (targetIndex < 0) return null;
+  return segments
+    .slice(targetIndex + 1)
+    .find(
+      (segment) =>
+        segment.codexState === "waiting_for_user" ||
+        segment.codexState === "completed" ||
+        segment.codexState === "failed",
+    ) ?? null;
+}
+
+function buildExactRealtimeMemoryReply(userMessage: string, messages: RealtimeMessage[]) {
+  const normalized = userMessage.toLowerCase();
+  const hasRefreshBoundary = messages.some((message) => message.role === "system" && message.eventKind === "refreshed");
+  if (!hasRefreshBoundary) return null;
+
+  const asksAboutMemory =
+    normalized.includes("remember") ||
+    normalized.includes("memory") ||
+    normalized.includes("history") ||
+    normalized.includes("first message") ||
+    normalized.includes("full conversation") ||
+    normalized.includes("all you remember") ||
+    normalized.includes("every message") ||
+    normalized.includes("what did i say");
+  if (!asksAboutMemory) return null;
+
+  return "Fresh session after refresh. I only remember messages since reload, not before it.";
+}
 
 function extractTouchedPath(command: string) {
   const match = command.match(/(?:cat|ls|nl -ba|sed -n '[^']+'|rg --files)\s+(['"]?)([^'"\n]+)\1/);
@@ -106,36 +328,25 @@ function getSegmentMessages(codexMessages: CodexMessage[], segmentId?: string | 
   return codexMessages.filter((message) => message.segmentId === segmentId);
 }
 
-function messageLooksLikeQuestion(text: string) {
-  const trimmed = text.trim();
-  if (!trimmed) return false;
-  if (trimmed.includes("?")) return true;
-
-  const lowered = trimmed.toLowerCase();
-  return [
-    "could you clarify",
-    "can you clarify",
-    "please clarify",
-    "need clarity",
-    "need more direction",
-    "need more detail",
-    "which ",
-    "what kind",
-    "what would you like",
-    "what do you want",
-    "let me know if",
-    "if you want me to",
-  ].some((phrase) => lowered.includes(phrase));
-}
-
 function getSegmentEvents(agentEvents: AgentEvent[], segmentId?: string | null) {
   if (!segmentId) return [];
   return agentEvents.filter((event) => event.segmentId === segmentId);
 }
 
-function getRecentSegmentActivities(segment: CodexSegment | null, limit = 3) {
+function getActivitiesSinceCheckIn(segment: CodexSegment | null) {
   if (!segment) return [];
-  return segment.activities.slice(-limit).reverse();
+  if (segment.lastRelayedActivityIndex >= 0) {
+    return segment.activities.slice(segment.lastRelayedActivityIndex + 1);
+  }
+  if (!segment.lastUserCheckInAt) {
+    return segment.activities;
+  }
+  return segment.activities.filter((activity) => activity.timestamp > segment.lastUserCheckInAt!);
+}
+
+function getUnrelayedActivities(segment: CodexSegment | null) {
+  if (!segment) return [];
+  return segment.activities.slice(segment.lastRelayedActivityIndex + 1);
 }
 
 function summarizeSegmentActivitiesForSpeech(activities: CodexSegmentActivity[]) {
@@ -247,71 +458,59 @@ function latestCommandLooksLikeChecks(command: string) {
   return /\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|lint|check|typecheck|validate)\b/.test(command);
 }
 
+function capSpeechReply(text: string, maxLength = 80) {
+  return text.slice(0, maxLength);
+}
+
+function formatActivityFileLabel(summary: string, fallback: string | undefined) {
+  const fileMatch =
+    summary.match(/\b(?:Read(?:ing)?|Edited|Editing|Updated)\s+([^\n.]+)/i) ??
+    summary.match(/\b([A-Za-z0-9_./-]+\.[A-Za-z0-9_-]+)\b/);
+  return (fileMatch?.[1] ?? fallback ?? "").trim();
+}
+
 function summarizeRunningSegmentForSpeech(
   segment: CodexSegment | null,
   segmentMessages: CodexMessage[] = [],
-  agentEvents: AgentEvent[] = [],
 ) {
   if (!segment) return "Codex is idle right now.";
 
   const latestCommand = getLatestCodexCommand(segment);
   const latestProgressMessage = getLatestSegmentAssistantProgress(segmentMessages);
-  const latestEventSummary = summarizeRecentCommands(getSegmentEvents(agentEvents, segment.id));
-  const recentActivitySummary = summarizeSegmentActivitiesForSpeech(getRecentSegmentActivities(segment, 2));
   const workingLabel = getSegmentWorkingLabel(segment);
   if (workingLabel === "waiting for input...") {
-    return "Codex is waiting for input.";
+    return capSpeechReply("Waiting for input.");
   }
 
-  if (latestProgressMessage?.kind === "edit") {
-    const latestEditedFile = segment.filesEdited.at(-1);
-    if (latestEditedFile) return `Codex is editing ${latestEditedFile}.`;
-    return "Codex is editing files.";
+  const latestEditActivity = [...segment.activities].reverse().find((activity) => activity.kind === "edit");
+  if (latestEditActivity || latestProgressMessage?.kind === "edit") {
+    const latestEditedFile = formatActivityFileLabel(latestEditActivity?.summary ?? "", segment.filesEdited.at(-1));
+    return capSpeechReply(latestEditedFile ? `Editing ${latestEditedFile}.` : "Editing files.");
   }
 
-  if (latestProgressMessage?.kind === "read") {
-    const latestReadFile = segment.filesRead.at(-1);
-    if (latestReadFile) return `Codex is reading ${latestReadFile}.`;
-    if (recentActivitySummary) return recentActivitySummary;
-    if (latestEventSummary) return `Codex is reading files. ${latestEventSummary}`.slice(0, 180);
-    return "Codex is reading files.";
+  const latestReadActivity = [...segment.activities].reverse().find((activity) => activity.kind === "read");
+  if (latestReadActivity || latestProgressMessage?.kind === "read" || workingLabel === "reading files...") {
+    const latestReadFile = formatActivityFileLabel(latestReadActivity?.summary ?? "", segment.filesRead.at(-1));
+    return capSpeechReply(latestReadFile ? `Reading ${latestReadFile}.` : "Reading files.");
   }
 
-  if (latestProgressMessage?.kind === "plan") {
-    return "Codex is updating the plan.";
-  }
-
-  if (workingLabel === "reading files...") {
-    if (latestEventSummary) return `Codex is reading files. ${latestEventSummary}`.slice(0, 180);
-    return "Codex is reading files.";
-  }
-
-  if (workingLabel === "running checks...") {
+  const latestCommandActivity = [...segment.activities].reverse().find((activity) => activity.kind === "command");
+  if (latestCommandActivity || workingLabel === "running checks..." || workingLabel === "running command...") {
     if (latestCommandLooksLikeBuild(latestCommand)) {
-      return "Codex is running a build.";
+      return capSpeechReply("Running a build.");
     }
     if (latestCommandLooksLikeChecks(latestCommand)) {
-      return "Codex is running checks.";
+      return capSpeechReply("Running checks.");
     }
-    return "Codex is running checks.";
+    return capSpeechReply("Running a command.");
   }
 
-  if (workingLabel === "running command...") {
-    if (latestCommandLooksLikeBuild(latestCommand)) {
-      return "Codex is running a build.";
-    }
-    if (latestCommandLooksLikeChecks(latestCommand)) {
-      return "Codex is running checks.";
-    }
-    return "Codex is running a command.";
+  const latestPlanActivity = [...segment.activities].reverse().find((activity) => activity.kind === "plan");
+  if (latestPlanActivity || latestProgressMessage?.kind === "plan") {
+    return capSpeechReply("Planning next steps.");
   }
 
-  if (workingLabel?.startsWith("editing ")) {
-    return `Codex is ${workingLabel.replace(/\.\.\.$/, ".")}`;
-  }
-
-  if (recentActivitySummary) return recentActivitySummary;
-  return "Codex is working.";
+  return capSpeechReply("Working.");
 }
 
 function buildExactCodexRelayReply(
@@ -354,16 +553,14 @@ function buildExactCodexRelayReply(
     .reverse()
     .find((message) => message.role === "assistant" && message.status === "final" && message.text.trim());
   const latestAssistantLine = getSegmentFirstLine(latestAssistantMessage?.text);
-  const transcriptBlockingQuestion = latestAssistantLine && messageLooksLikeQuestion(latestAssistantLine) ? latestAssistantLine : null;
-  const blockingQuestion = transcriptBlockingQuestion ?? getSegmentFirstLine(segment.blockingQuestion);
-  const finalOutcome =
-    latestAssistantLine && !transcriptBlockingQuestion
-      ? latestAssistantLine
-      : getSegmentFirstLine(segment.finalOutcome);
+  const blockingQuestion = getSegmentFirstLine(segment.blockingQuestion);
+  const finalOutcome = getSegmentFirstLine(segment.finalOutcome) ?? latestAssistantLine;
   const latestMilestone = getSegmentFirstLine(segment.latestMilestone);
   const readEditSummary = buildSegmentReadEditSummary(segment);
   const latestCommand = getLatestCodexCommand(segment);
-  const recentActivitySummary = summarizeSegmentActivitiesForSpeech(getRecentSegmentActivities(segment));
+  const scopedActivities = getActivitiesSinceCheckIn(segment);
+  const scopedActivitySummary = summarizeSegmentActivitiesForSpeech([...scopedActivities].reverse().slice(0, 3));
+  const unrelayedActivities = getUnrelayedActivities(segment);
 
   if (asksLastMessage) {
     if (blockingQuestion) return `Codex's last message was: ${blockingQuestion}`;
@@ -374,7 +571,7 @@ function buildExactCodexRelayReply(
 
   if (asksAboutQuestion) {
     if (blockingQuestion) return `Yes. Codex asked: ${blockingQuestion}`;
-    return "No. Codex did not ask a clarification question in the current segment.";
+    return "No, Codex did not ask a question.";
   }
 
   if (asksWhatHappened) {
@@ -389,12 +586,20 @@ function buildExactCodexRelayReply(
       return [lead, "It is waiting for input.", `It asked: ${blockingQuestion}`].join(" ").slice(0, 320);
     }
 
+    if (scopedActivities.length === 0) {
+      const currentState =
+        segment.codexState === "running"
+          ? summarizeRunningSegmentForSpeech(segment, segmentMessages)
+          : summarizeSegmentStatus(segment, agentEvents);
+      return `Nothing new since you last asked. ${currentState}`.slice(0, 320);
+    }
+
     if (finalOutcome) {
       return [lead, `Latest result: ${finalOutcome}`, readEditSummary].filter(Boolean).join(" ").slice(0, 320);
     }
 
-    if (recentActivitySummary) {
-      return [lead, recentActivitySummary, readEditSummary].filter(Boolean).join(" ").slice(0, 320);
+    if (scopedActivitySummary) {
+      return [lead, scopedActivitySummary, readEditSummary].filter(Boolean).join(" ").slice(0, 320);
     }
 
     if (latestMilestone) {
@@ -412,7 +617,11 @@ function buildExactCodexRelayReply(
       }
       return "Hard to tell exactly. Codex is still working.";
     }
-    return summarizeRunningSegmentForSpeech(segment, segmentMessages, agentEvents);
+    if (segment.lastUserCheckInAt && unrelayedActivities.length === 0) {
+      const shortStatus = summarizeRunningSegmentForSpeech(segment, segmentMessages).replace(/\.$/, "");
+      return `Still ${shortStatus.charAt(0).toLowerCase()}${shortStatus.slice(1)}, nothing new since you last asked.`.slice(0, 120);
+    }
+    return summarizeRunningSegmentForSpeech(segment, segmentMessages);
   }
 
   return summarizeSegmentStatus(segment, agentEvents);
@@ -488,7 +697,7 @@ function formatLocalTime(timestamp: string) {
   const timeOnlyMatch = timestamp.match(/^(\d{2}:\d{2}:\d{2})(?:\.(\d+))?$/);
   if (timeOnlyMatch) {
     const [, base, fraction] = timeOnlyMatch;
-    return fraction ? `${base}.${fraction[0]}` : base;
+    return fraction ? `${base}.${fraction.padEnd(2, "0").slice(0, 2)}` : base;
   }
 
   const date = new Date(timestamp);
@@ -497,7 +706,7 @@ function formatLocalTime(timestamp: string) {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-    fractionalSecondDigits: 1,
+    fractionalSecondDigits: 2,
     hour12: false,
   }).format(date);
 }
@@ -581,7 +790,13 @@ function eventToneClass(method?: string) {
   return "text-zinc-400";
 }
 
-function handoffEventClasses(kind?: "start" | "steer" | "interrupt") {
+function handoffEventClasses(kind?: "start" | "steer" | "interrupt" | "interrupted" | "refreshed") {
+  if (kind === "interrupted" || kind === "refreshed") {
+    return {
+      badge: "",
+      text: "text-zinc-500",
+    };
+  }
   if (kind === "steer") {
     return {
       badge: "border-[#7fe38b]/20 bg-[#7fe38b]/10 text-[#bff6b9]",
@@ -718,6 +933,22 @@ function CodexStatusBadge({ codexState }: { codexState: CodexSegmentState }) {
         <div className="text-[14px] font-semibold leading-none text-zinc-100">{label}</div>
       </div>
     </div>
+  );
+}
+
+function OpenAIWordmarkIcon() {
+  return (
+    <svg fill="currentColor" fillRule="evenodd" viewBox="0 0 24 24" aria-hidden="true" className="size-4">
+      <path d="M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z" />
+    </svg>
+  );
+}
+
+function CodexWordmarkIcon() {
+  return (
+    <svg fill="currentColor" fillRule="evenodd" viewBox="0 0 24 24" aria-hidden="true" className="size-4">
+      <path clipRule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z" />
+    </svg>
   );
 }
 
@@ -969,26 +1200,28 @@ function CodexConversationPanel({
               </div>
             ))
           )}
-          <div className="py-1.5">
-            <div
-              className={`relative flex min-h-6 w-full items-center gap-3 overflow-hidden rounded-full border border-[#b9f075]/10 bg-[#b9f075]/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-zinc-500 ${
-                animateWorkingRow ? "codex-working-row" : ""
-              }`}
-            >
-              {animateWorkingRow ? (
+          {messages.length > 0 ? (
+            <div className="py-1.5">
+              <div
+                className={`relative flex min-h-6 w-full items-center gap-3 overflow-hidden rounded-full border border-[#b9f075]/10 bg-[#b9f075]/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-zinc-500 ${
+                  animateWorkingRow ? "codex-working-row" : ""
+                }`}
+              >
+                {animateWorkingRow ? (
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-y-0 left-[-24%] w-[24%] bg-[linear-gradient(90deg,transparent,rgba(185,240,117,0.14),transparent)] codex-working-sheen"
+                  />
+                ) : null}
+                <span className="relative shrink-0 font-medium text-[#d8f5ab]">{statusLabel}</span>
                 <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-y-0 left-[-24%] w-[24%] bg-[linear-gradient(90deg,transparent,rgba(185,240,117,0.14),transparent)] codex-working-sheen"
+                  className={`relative size-1.5 shrink-0 rounded-full ${workingIndicatorClass} ${animateWorkingRow ? "codex-working-dot" : ""}`}
                 />
-              ) : null}
-              <span className="relative shrink-0 font-medium text-[#d8f5ab]">{statusLabel}</span>
-              <span
-                className={`relative size-1.5 shrink-0 rounded-full ${workingIndicatorClass} ${animateWorkingRow ? "codex-working-dot" : ""}`}
-              />
-              <span className="min-w-0 flex-1 truncate text-zinc-300">{workingLabel}</span>
-              {activeSegment ? <TimestampLabel timestamp={activeSegment.updatedAt} className="shrink-0" /> : null}
+                <span className="min-w-0 flex-1 truncate text-zinc-300">{workingLabel}</span>
+                {activeSegment ? <TimestampLabel timestamp={activeSegment.updatedAt} className="shrink-0" /> : null}
+              </div>
             </div>
-          </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -1039,6 +1272,11 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
                         message.role === "user" ? "justify-end" : "justify-start"
                       }`}
                     >
+                      {message.role === "user" ? (
+                        <span className="rounded-full border border-white/8 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-400">
+                          {message.source}
+                        </span>
+                      ) : null}
                       <TimestampLabel timestamp={message.timestamp} />
                       {messagePhaseLabel(message) ? (
                         message.status === "streaming" ? (
@@ -1046,11 +1284,6 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
                         ) : (
                           <span className="text-zinc-500">{messagePhaseLabel(message)}</span>
                         )
-                      ) : null}
-                      {message.role === "user" ? (
-                        <span className="rounded-full border border-white/8 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-400">
-                          {message.source}
-                        </span>
                       ) : null}
                     </div>
                     <div
@@ -1100,7 +1333,7 @@ function formatTranscriptExportSection<
     : messages
         .map((message) => {
           const cleanedText = message.text.trim() || "(empty)";
-          return `[${message.timestamp}] ${message.role} (${message.status})\n${cleanedText}`;
+          return `[${formatLocalTime(message.timestamp)}] ${message.role} (${message.status})\n${cleanedText}`;
         })
         .join("\n\n");
 
@@ -1108,12 +1341,31 @@ function formatTranscriptExportSection<
 }
 
 export default function App() {
+  const persistedRealtimeMessagesRef = useRef<RealtimeMessage[]>(
+    normalizePersistedRealtimeMessages(
+      readStoredJson<RealtimeMessage[]>(STORAGE_KEYS.realtimeMessages, []),
+    ),
+  );
+  const persistedRealtimeLogsRef = useRef<RealtimeLog[]>(
+    readStoredJson<RealtimeLog[]>(STORAGE_KEYS.realtimeLogs, []),
+  );
+  const persistedCodexMessagesRef = useRef<CodexMessage[]>([]);
+  const persistedCodexLogRef = useRef<LogEntry[]>([]);
+  const persistedCodexEventsRef = useRef<AgentEvent[]>([]);
+  const persistedCodexSegmentsRef = useRef<CodexSegment[]>([]);
+  const persistedReconnectIntentRef = useRef<PersistedReconnectIntent>(
+    readStoredJson<PersistedReconnectIntent>(STORAGE_KEYS.reconnectIntent, {
+      shouldReconnectRealtime: false,
+    }),
+  );
   const [wsUrl] = useState("ws://localhost:3001?target=ws://127.0.0.1:3000");
   const [selectedModel, setSelectedModel] = useState("");
   const [realtimeText, setRealtimeText] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [codexTaskText, setCodexTaskText] = useState("");
+  const [showExtraOverlay, setShowExtraOverlay] = useState(false);
+  const [copyLogsState, setCopyLogsState] = useState<"idle" | "copied" | "error">("idle");
 
   const {
     status,
@@ -1133,8 +1385,14 @@ export default function App() {
     steerTurn,
     interruptTurn,
     beginSegment,
+    updateSegment,
     setSegmentRelayState,
-  } = useCodexWebSocket();
+  } = useCodexWebSocket({
+    initialLog: persistedCodexLogRef.current,
+    initialAgentEvents: persistedCodexEventsRef.current,
+    initialCodexMessages: persistedCodexMessagesRef.current,
+    initialSegments: persistedCodexSegmentsRef.current,
+  });
 
   const {
     status: realtimeStatus,
@@ -1153,42 +1411,195 @@ export default function App() {
     isAssistantSpeaking,
     skipAssistant,
     addSystemMessage: addRealtimeSystemMessage,
-  } = useOpenAIRealtime();
+  } = useOpenAIRealtime({
+    initialMessages: persistedRealtimeMessagesRef.current,
+    initialLogs: persistedRealtimeLogsRef.current,
+  });
 
   const sdpHandlerRef = useRef<((sdp: string) => void) | null>(null);
   const realtimeInputRef = useRef<HTMLInputElement | null>(null);
   const prevEventCount = useRef(0);
-  const lastHandledRealtimeMessageIdRef = useRef<string | null>(null);
+  const lastHandledRealtimeMessageIdRef = useRef<string | null>(
+    [...persistedRealtimeMessagesRef.current]
+      .reverse()
+      .find((message) => message.role === "user" && message.status === "final")
+      ?.id ?? null,
+  );
   const routeCacheRef = useRef(new Map<string, RoutedIntent>());
   const queuedInterruptReplacementRef = useRef<{ request: string; segmentId: string } | null>(null);
   const pendingCodexNarrationRef = useRef<{ request: string; segmentId: string } | null>(null);
-  const codexBootstrapAttemptedRef = useRef(false);
-  const realtimeBootstrapAttemptedRef = useRef(false);
+  const lastRelayedQuestionRef = useRef<string | null>(null);
+  const debugNotesRef = useRef<DebugNote[]>([]);
+  const realtimeReconnectAttemptAtRef = useRef(0);
+  const codexReconnectAttemptAtRef = useRef(0);
+  const latestRealtimeUserMessageIdRef = useRef<string | null>(null);
   const [threadError, setThreadError] = useState<string | null>(null);
-  const currentSegment = getCurrentSegment(segments);
+  const latestSegment = getCurrentSegment(segments);
+  const currentSegment = findPreferredSegment(segments, activeTurnStatus);
   const currentCodexState: CodexSegmentState = currentSegment?.codexState ?? "idle";
   const currentCodexStatus = summarizeSegmentStatus(currentSegment, agentEvents);
   const paneOnlyMode = true;
 
+  const addDebugNote = useCallback((label: string, detail?: string) => {
+    const nextNote: DebugNote = {
+      timestamp: formatNowLocal(2),
+      label,
+      detail: detail?.slice(0, 240),
+    };
+    debugNotesRef.current = [...debugNotesRef.current, nextNote].slice(-80);
+    console.debug(`[voice-codex] ${label}`, detail ?? "");
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    setShowExtraOverlay(params.has("debug"));
+  }, []);
+
+  useEffect(() => {
+    const restoredMessages = persistedRealtimeMessagesRef.current;
+    if (restoredMessages.length === 0) return;
+    const lastRestoredMessage = restoredMessages.at(-1);
+    if (
+      lastRestoredMessage?.role === "system" &&
+      lastRestoredMessage.eventKind === "refreshed"
+    ) {
+      return;
+    }
+    const hasRealHistory = restoredMessages.some(
+      (message) => (message.role === "user" || message.role === "assistant") && message.text.trim(),
+    );
+    if (!hasRealHistory) return;
+    if (typeof window !== "undefined") {
+      const latestRealMessageId =
+        [...restoredMessages]
+          .reverse()
+          .find((message) => (message.role === "user" || message.role === "assistant") && message.text.trim())
+          ?.id ?? null;
+      const previousMarkedRealMessageId = window.sessionStorage.getItem(PAGE_REFRESH_MARKER_REAL_MESSAGE_KEY);
+      if (latestRealMessageId && previousMarkedRealMessageId === latestRealMessageId) return;
+      const loadId = String(Math.floor(window.performance.timeOrigin));
+      const previousLoadId = window.sessionStorage.getItem(PAGE_REFRESH_MARKER_LOAD_KEY);
+      if (previousLoadId === loadId) return;
+      window.sessionStorage.setItem(PAGE_REFRESH_MARKER_LOAD_KEY, loadId);
+      if (latestRealMessageId) {
+        window.sessionStorage.setItem(PAGE_REFRESH_MARKER_REAL_MESSAGE_KEY, latestRealMessageId);
+      }
+    }
+    addRealtimeSystemMessage("page refreshed", "refreshed");
+  }, [addRealtimeSystemMessage]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.removeItem(STORAGE_KEYS.codexMessages);
+    window.localStorage.removeItem(STORAGE_KEYS.codexLog);
+    window.localStorage.removeItem(STORAGE_KEYS.codexEvents);
+    window.localStorage.removeItem(STORAGE_KEYS.codexSegments);
+  }, []);
+
+  useEffect(() => {
+    writeStoredJson(STORAGE_KEYS.realtimeMessages, realtimeMessages.slice(-PERSIST_LIMITS.realtimeMessages));
+  }, [realtimeMessages]);
+
+  useEffect(() => {
+    writeStoredJson(STORAGE_KEYS.realtimeLogs, realtimeLogs.slice(-PERSIST_LIMITS.realtimeLogs));
+  }, [realtimeLogs]);
+
+  useEffect(() => {
+    const staleTimer = window.setInterval(() => {
+      segments.forEach((segment) => {
+        if (segment.codexState !== "running") return;
+        const supersedingSegment = findSupersedingSegment(segments, segment);
+        if (supersedingSegment) {
+          updateSegment(segment.id, (seg) => ({
+            ...seg,
+            codexState: "failed",
+            latestMilestone: "Superseded by a newer task.",
+            finalOutcome: seg.finalOutcome ?? "Superseded by a newer task.",
+            activities: [
+              ...seg.activities,
+              {
+                id: `cleanup-${seg.id}-superseded`,
+                kind: "error" as const,
+                summary: "Superseded by a newer task.",
+                timestamp: formatNowLocal(2),
+              },
+            ].slice(-12),
+          }));
+          addDebugNote("stale_segment_cleanup", `segment=${segment.id}; reason=superseded; by=${supersedingSegment.id}`);
+          return;
+        }
+
+        if (!segmentLooksStale(segment, activeTurnStatus)) return;
+        updateSegment(segment.id, (seg) => ({
+          ...seg,
+          codexState: "failed",
+          latestMilestone: "Interrupted before completion.",
+          finalOutcome: seg.finalOutcome ?? "Interrupted before completion.",
+          activities: [
+            ...seg.activities,
+            {
+              id: `cleanup-${seg.id}-interrupted`,
+              kind: "error" as const,
+              summary: "Interrupted before completion.",
+              timestamp: formatNowLocal(2),
+            },
+          ].slice(-12),
+        }));
+        addDebugNote("stale_segment_cleanup", `segment=${segment.id}; reason=timeout`);
+      });
+    }, 5000);
+    return () => window.clearInterval(staleTimer);
+  }, [activeTurnStatus, addDebugNote, segments, updateSegment]);
+
+  useEffect(() => {
+    const nextIntent = { ...persistedReconnectIntentRef.current };
+    if (realtimeStatus === "active" || realtimeStatus === "connecting" || realtimeStatus === "requesting-mic") {
+      nextIntent.shouldReconnectRealtime = true;
+    }
+    persistedReconnectIntentRef.current = nextIntent;
+    writeStoredJson(STORAGE_KEYS.reconnectIntent, nextIntent);
+  }, [realtimeStatus, status]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    window.__VOICE_CODEX_EXPORT_TEXT__ = () => {
+    const exportLogs = () => {
       const projectPath = window.IDEBridge?.projectPath?.trim() || getCodexProjectCwd();
       return [
         `Voice Codex Export`,
         `Project: ${projectPath}`,
         ``,
-        formatTranscriptExportSection("Realtime Agent", realtimeMessages),
+        formatTranscriptExportSection("Realtime Voice Agent", realtimeMessages),
         ``,
-        formatTranscriptExportSection("Codex app-server", codexMessages),
+        formatTranscriptExportSection("Codex", codexMessages),
+        ``,
+        `Session State`,
+        `=============`,
+        `Realtime status: ${realtimeStatus}`,
+        `Realtime reconnect intent: ${persistedReconnectIntentRef.current.shouldReconnectRealtime ? "on" : "off"}`,
+        `Codex socket status: ${status}`,
+        `Codex state: ${currentCodexState}`,
+        `Active turn status: ${activeTurnStatus}`,
+        `Active turn id: ${activeTurnId ?? "(none)"}`,
+        `Preferred segment: ${currentSegment?.id ?? "(none)"}`,
+        `Latest segment: ${latestSegment?.id ?? "(none)"}`,
+        ``,
+        `Debug Notes`,
+        `===========`,
+        ...(debugNotesRef.current.length === 0
+          ? ["(none)"]
+          : debugNotesRef.current.map((note) => `[${note.timestamp}] ${note.label}${note.detail ? ` :: ${note.detail}` : ""}`)),
       ].join("\n");
     };
+    window.__VOICE_CODEX_EXPORT_TEXT__ = exportLogs;
+    window.__VOICE_CODEX_COPY_LOGS__ = exportLogs;
 
     return () => {
       delete window.__VOICE_CODEX_EXPORT_TEXT__;
+      delete window.__VOICE_CODEX_COPY_LOGS__;
     };
-  }, [codexMessages, realtimeMessages]);
+  }, [activeTurnId, activeTurnStatus, codexMessages, currentCodexState, currentSegment?.id, latestSegment?.id, realtimeMessages, realtimeStatus, status]);
 
   const routeIntent = async (message: string, codexRunning: boolean): Promise<RoutedIntent> => {
     const latestCodexReply = [...codexMessages]
@@ -1287,12 +1698,53 @@ export default function App() {
   };
 
   const handleStartRealtime = async () => {
+    const nextIntent = { ...persistedReconnectIntentRef.current, shouldReconnectRealtime: true };
+    persistedReconnectIntentRef.current = nextIntent;
+    writeStoredJson(STORAGE_KEYS.reconnectIntent, nextIntent);
+    const reconnectHistory = realtimeMessages.length > 0
+      ? realtimeMessages
+      : persistedRealtimeMessagesRef.current;
     await connectRealtime({
       model: "gpt-realtime",
       voice: "marin",
-      instructions:
-        `You are voice coding assistant inside an already-open software project. Project workspace already known and connected to Codex. Do not ask user for repo name, folder, project structure, or what files exist unless truly impossible. For requests about files, codebase structure, repo contents, implementation details, or inspection, default to delegating to Codex. If the user asks to show, open, reveal, or focus a file in the IDE, use the focus_file_in_ide tool instead of only describing the file. Do not claim you already queried Codex unless frontend actually dispatched Codex work. If delegation not yet confirmed, say brief handoff like "Checking Codex now." Never make up project facts, implementation details, files, components, APIs, or what Codex built. If the answer is unclear from explicit context already provided in conversation, say you need to check Codex or ask a brief clarifying question instead of guessing. Use user only for product intent, ambiguity, or preference decisions. Speak only English unless user explicitly asks another language. Wait until user finishes speaking before replying. ${TERSE_AGENT_STYLE}`,
+      instructions: buildRealtimeConnectInstructions(reconnectHistory),
+      preserveHistory: true,
     });
+  };
+
+  const handleClearChat = async () => {
+    persistedRealtimeMessagesRef.current = [];
+    persistedRealtimeLogsRef.current = [];
+    lastHandledRealtimeMessageIdRef.current = null;
+    routeCacheRef.current.clear();
+    queuedInterruptReplacementRef.current = null;
+    pendingCodexNarrationRef.current = null;
+    lastRelayedQuestionRef.current = null;
+    debugNotesRef.current = [];
+    setRealtimeText("");
+    setCodexTaskText("");
+    setThreadError(null);
+
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(STORAGE_KEYS.realtimeMessages);
+      window.localStorage.removeItem(STORAGE_KEYS.realtimeLogs);
+      window.localStorage.removeItem(STORAGE_KEYS.codexMessages);
+      window.localStorage.removeItem(STORAGE_KEYS.codexLog);
+      window.localStorage.removeItem(STORAGE_KEYS.codexEvents);
+      window.localStorage.removeItem(STORAGE_KEYS.codexSegments);
+    }
+
+    const nextIntent = { ...persistedReconnectIntentRef.current, shouldReconnectRealtime: true };
+    persistedReconnectIntentRef.current = nextIntent;
+    writeStoredJson(STORAGE_KEYS.reconnectIntent, nextIntent);
+
+    await connectRealtime({
+      model: "gpt-realtime",
+      voice: "marin",
+      instructions: REALTIME_CONNECT_INSTRUCTIONS,
+      preserveHistory: false,
+    });
+    connect(wsUrl, false);
   };
 
   const handleSendRealtimeText = () => {
@@ -1315,19 +1767,23 @@ export default function App() {
   }, [realtimeStatus]);
 
   useEffect(() => {
-    if (realtimeBootstrapAttemptedRef.current) return;
-    if (realtimeStatus !== "idle") return;
-    realtimeBootstrapAttemptedRef.current = true;
+    if (!persistedReconnectIntentRef.current.shouldReconnectRealtime) return;
+    if (realtimeStatus !== "idle" && realtimeStatus !== "error") return;
+    const now = Date.now();
+    if (now - realtimeReconnectAttemptAtRef.current < 2500) return;
+    realtimeReconnectAttemptAtRef.current = now;
     void handleStartRealtime().catch((error) => {
       console.error(error);
     });
-  }, [realtimeStatus]);
+  }, [handleStartRealtime, realtimeStatus]);
 
   useEffect(() => {
-    if (codexBootstrapAttemptedRef.current) return;
-    codexBootstrapAttemptedRef.current = true;
-    connect(wsUrl);
-  }, [connect, wsUrl]);
+    if (status !== "disconnected" && status !== "error") return;
+    const now = Date.now();
+    if (now - codexReconnectAttemptAtRef.current < 2500) return;
+    codexReconnectAttemptAtRef.current = now;
+    connect(wsUrl, false);
+  }, [connect, status, wsUrl]);
 
   useEffect(() => {
     if (status !== "connected") return;
@@ -1352,24 +1808,65 @@ export default function App() {
       .find((message) => message.role === "user" && message.status === "final");
 
     if (!latestFinalUserMessage) return;
+    latestRealtimeUserMessageIdRef.current = latestFinalUserMessage.id;
     if (lastHandledRealtimeMessageIdRef.current === latestFinalUserMessage.id) return;
 
     lastHandledRealtimeMessageIdRef.current = latestFinalUserMessage.id;
 
     const dispatch = async () => {
+      const abortIfSuperseded = () => latestRealtimeUserMessageIdRef.current !== latestFinalUserMessage.id;
+      const exactRealtimeMemoryReply = buildExactRealtimeMemoryReply(latestFinalUserMessage.text, realtimeMessages);
+      if (exactRealtimeMemoryReply) {
+        addDebugNote("relay_realtime_memory", `reply=${exactRealtimeMemoryReply}`);
+        sendRealtimeText(
+          `Say exactly this to the user and nothing else:\n${exactRealtimeMemoryReply}`,
+          { requestResponse: true, visible: false },
+        );
+        return;
+      }
+
       let routed = routeCacheRef.current.get(latestFinalUserMessage.id);
       if (!routed) {
         routed = await routeIntent(latestFinalUserMessage.text, currentCodexState === "running" || currentCodexState === "waiting_for_user");
+        if (abortIfSuperseded()) return;
         routeCacheRef.current.set(latestFinalUserMessage.id, routed);
       }
+      if (abortIfSuperseded()) return;
 
       if (routed.action === "chat_only") {
         if (routed.chat_mode === "relay_codex_status") {
-          const exactReply = buildExactCodexRelayReply(
-            latestFinalUserMessage.text,
-            currentSegment,
-            getSegmentMessages(codexMessages, currentSegment?.id),
-            agentEvents,
+          let exactReply = "Codex is idle right now.";
+          let relayPriority = "idle_or_unknown";
+          if (currentSegment?.blockingQuestion && currentSegment.relayState !== "clarification_spoken") {
+            relayPriority = "blocking_question";
+            exactReply = `Codex needs your input. It asked: ${getSegmentFirstLine(currentSegment.blockingQuestion)}`;
+          } else if (currentSegment?.codexState === "running") {
+            relayPriority = "running";
+            exactReply = buildExactCodexRelayReply(
+              latestFinalUserMessage.text,
+              currentSegment,
+              getSegmentMessages(codexMessages, currentSegment.id),
+              agentEvents,
+            );
+          } else if (currentSegment?.codexState === "completed" || currentSegment?.codexState === "failed") {
+            relayPriority = currentSegment.codexState;
+            exactReply = buildExactCodexRelayReply(
+              latestFinalUserMessage.text,
+              currentSegment,
+              getSegmentMessages(codexMessages, currentSegment.id),
+              agentEvents,
+            );
+          } else {
+            exactReply = buildExactCodexRelayReply(
+              latestFinalUserMessage.text,
+              currentSegment,
+              getSegmentMessages(codexMessages, currentSegment?.id),
+              agentEvents,
+            );
+          }
+          addDebugNote(
+            "relay_codex_status",
+            `priority=${relayPriority}; segment=${currentSegment?.id ?? "none"}; state=${currentSegment?.codexState ?? "idle"}; reply=${exactReply}`,
           );
           if (currentSegment) {
             if (currentSegment.blockingQuestion) {
@@ -1377,6 +1874,11 @@ export default function App() {
             } else if (currentSegment.codexState === "running") {
               setSegmentRelayState(currentSegment.id, "progress_spoken");
             }
+            updateSegment(currentSegment.id, (seg) => ({
+              ...seg,
+              lastUserCheckInAt: formatNowLocal(0),
+              lastRelayedActivityIndex: seg.activities.length - 1,
+            }));
           }
           sendRealtimeText(
             `Say exactly this to the user and nothing else:\n${exactReply}`,
@@ -1397,6 +1899,10 @@ export default function App() {
               getSegmentMessages(codexMessages, relevantSegment.id),
               agentEvents,
             );
+            addDebugNote(
+              "relay_latest_codex",
+              `segment=${relevantSegment.id}; state=${relevantSegment.codexState}; reply=${exactReply}`,
+            );
             sendRealtimeText(
               `Say exactly this to the user and nothing else:\n${exactReply}`,
               { requestResponse: true, visible: false },
@@ -1412,16 +1918,23 @@ export default function App() {
       if (status !== "connected") return;
       setThreadError(null);
 
+      const codexDispatchText = normalizeCodexDispatchText(latestFinalUserMessage.text);
+      addDebugNote(
+        "codex_dispatch_text",
+        `original=${latestFinalUserMessage.text}; normalized=${codexDispatchText || latestFinalUserMessage.text}`,
+      );
+
       let activeThread = thread;
       if (!activeThread) {
         if (!selectedModel) throw new Error("No valid Codex model loaded yet.");
         activeThread = await startThread(getCodexProjectCwd(), selectedModel);
+        if (abortIfSuperseded()) return;
       }
 
       if (routed.action === "codex_interrupt" && activeTurnStatus === "running") {
         const segmentId = beginSegment("interrupt", latestFinalUserMessage.text);
-        queuedInterruptReplacementRef.current = { request: latestFinalUserMessage.text, segmentId };
-        pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, segmentId };
+        queuedInterruptReplacementRef.current = { request: codexDispatchText || latestFinalUserMessage.text, segmentId };
+        pendingCodexNarrationRef.current = { request: codexDispatchText || latestFinalUserMessage.text, segmentId };
         await interruptTurn(activeThread.id);
         addRealtimeSystemMessage("interrupt", "interrupt");
         return;
@@ -1429,16 +1942,16 @@ export default function App() {
 
       if (routed.action === "codex_steer" && activeTurnStatus === "running" && activeTurnId) {
         const segmentId = beginSegment("steer", latestFinalUserMessage.text);
-        pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, segmentId };
-        await steerTurn(activeThread.id, latestFinalUserMessage.text, segmentId);
+        pendingCodexNarrationRef.current = { request: codexDispatchText || latestFinalUserMessage.text, segmentId };
+        await steerTurn(activeThread.id, codexDispatchText || latestFinalUserMessage.text, segmentId);
         addRealtimeSystemMessage("steer", "steer");
         return;
       }
 
       if (activeTurnStatus === "idle") {
         const segmentId = beginSegment("start", latestFinalUserMessage.text);
-        pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, segmentId };
-        await startTurn(activeThread.id, latestFinalUserMessage.text, segmentId);
+        pendingCodexNarrationRef.current = { request: codexDispatchText || latestFinalUserMessage.text, segmentId };
+        await startTurn(activeThread.id, codexDispatchText || latestFinalUserMessage.text, segmentId);
         addRealtimeSystemMessage("new turn", "start");
       }
     };
@@ -1449,6 +1962,7 @@ export default function App() {
   }, [
     activeTurnId,
     activeTurnStatus,
+    addDebugNote,
     addRealtimeSystemMessage,
     agentEvents,
     codexMessages,
@@ -1468,6 +1982,7 @@ export default function App() {
     status,
     steerTurn,
     thread,
+    updateSegment,
   ]);
 
   useEffect(() => {
@@ -1475,21 +1990,30 @@ export default function App() {
     if (currentSegment.codexState !== "waiting_for_user") return;
     if (!currentSegment.blockingQuestion) return;
     if (currentSegment.relayState === "clarification_spoken" || currentSegment.relayState === "completion_spoken") return;
+    if (lastRelayedQuestionRef.current === currentSegment.blockingQuestion) {
+      addDebugNote("clarification_relay_skipped", `duplicate_question; segment=${currentSegment.id}`);
+      return;
+    }
 
     if (pendingCodexNarrationRef.current?.segmentId === currentSegment.id) {
       pendingCodexNarrationRef.current = null;
     }
 
     try {
+      lastRelayedQuestionRef.current = currentSegment.blockingQuestion;
+      addDebugNote(
+        "clarification_relay_sent",
+        `segment=${currentSegment.id}; question=${getSegmentFirstLine(currentSegment.blockingQuestion) ?? ""}`,
+      );
       sendRealtimeText(
-        `Codex needs user input. Relay this briefly and clearly as a short spoken question. Do not add anything. Do not summarize unrelated work.\n\nCodex segment:\n${JSON.stringify(buildSegmentSnapshot(currentSegment), null, 2)}`,
+        `Codex needs your input. It asked: "${currentSegment.blockingQuestion}". Relay this question to the user briefly. Do not add anything else.`,
         { requestResponse: true, visible: false },
       );
       setSegmentRelayState(currentSegment.id, "clarification_spoken");
     } catch (error) {
       console.error(error);
     }
-  }, [currentSegment, sendRealtimeText, setSegmentRelayState]);
+  }, [addDebugNote, currentSegment, sendRealtimeText, setSegmentRelayState]);
 
   useEffect(() => {
     if (activeTurnStatus !== "idle" || !thread || !queuedInterruptReplacementRef.current) return;
@@ -1511,22 +2035,41 @@ export default function App() {
     const pending = pendingCodexNarrationRef.current;
     const targetSegment = segments.find((segment) => segment.id === pending.segmentId);
     if (!targetSegment) return;
-    if (targetSegment.codexState === "running") return;
-    if (targetSegment.codexState === "waiting_for_user") return;
+    if (targetSegment.codexState !== "completed" && targetSegment.codexState !== "failed") return;
     if (targetSegment.relayState === "completion_spoken") return;
 
+    const hasMeaningfulSummary = Boolean(
+      getSegmentFirstLine(targetSegment.finalOutcome) ||
+      getSegmentFirstLine(targetSegment.latestMilestone) ||
+      targetSegment.filesEdited.length ||
+      targetSegment.filesRead.length ||
+      getUnrelayedActivities(targetSegment).length,
+    );
+
     pendingCodexNarrationRef.current = null;
+    if (!hasMeaningfulSummary) {
+      addDebugNote("completion_relay_skipped", `empty_summary; segment=${targetSegment.id}; state=${targetSegment.codexState}`);
+      return;
+    }
 
     try {
+      addDebugNote(
+        "completion_relay_sent",
+        `segment=${targetSegment.id}; state=${targetSegment.codexState}; summary=${getSegmentFirstLine(targetSegment.finalOutcome) ?? getSegmentFirstLine(targetSegment.latestMilestone) ?? "activity_only"}`,
+      );
       sendRealtimeText(
         `Codex finished a segment. Give the user a very short spoken summary of what changed or what Codex accomplished. Use only the structured segment summary below. Do not read raw command output. Do not repeat the user's wording. Keep it to one or two short sentences. End with one very short follow-up question, for example "Want tweaks?" No invention.\n\nOriginal user request:\n${pending.request}\n\nCodex segment summary:\n${JSON.stringify(buildSegmentSnapshot(targetSegment), null, 2)}\n\nCondensed status:\n${summarizeSegmentStatus(targetSegment, agentEvents)}`,
         { requestResponse: true, visible: false },
       );
-      setSegmentRelayState(targetSegment.id, "completion_spoken");
+      updateSegment(targetSegment.id, (seg) => ({
+        ...seg,
+        relayState: "completion_spoken",
+        lastRelayedActivityIndex: seg.activities.length - 1,
+      }));
     } catch (error) {
       console.error(error);
     }
-  }, [activeTurnStatus, agentEvents, segments, sendRealtimeText, setSegmentRelayState]);
+  }, [activeTurnStatus, addDebugNote, agentEvents, segments, sendRealtimeText, updateSegment]);
 
   const handleSendCodexTask = async () => {
     const task = codexTaskText.trim();
@@ -1548,6 +2091,47 @@ export default function App() {
       setCodexTaskText("");
     } catch (error) {
       setThreadError((error as Error).message);
+    }
+  };
+
+  const handleCopyLogs = async () => {
+    try {
+      const exportText = window.__VOICE_CODEX_COPY_LOGS__?.() ?? window.__VOICE_CODEX_EXPORT_TEXT__?.();
+      if (!exportText) throw new Error("Export text unavailable");
+
+      let copied = false;
+
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(exportText);
+          copied = true;
+        } catch {
+          copied = false;
+        }
+      }
+
+      {
+        const textArea = document.createElement("textarea");
+        textArea.value = exportText;
+        textArea.setAttribute("readonly", "true");
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
+        document.body.appendChild(textArea);
+        textArea.select();
+        copied = document.execCommand("copy") || copied;
+        document.body.removeChild(textArea);
+      }
+
+      if (!copied) {
+        throw new Error("Clipboard copy failed");
+      }
+
+      setCopyLogsState("copied");
+      window.setTimeout(() => setCopyLogsState("idle"), 1800);
+    } catch (error) {
+      console.error(error);
+      setCopyLogsState("error");
+      window.setTimeout(() => setCopyLogsState("idle"), 2200);
     }
   };
 
@@ -1638,9 +2222,8 @@ export default function App() {
         <div className={paneOnlyMode ? "flex min-h-0 flex-1 flex-col" : "space-y-4"}>
           <div className={`grid items-stretch gap-4 md:grid-cols-2 ${paneOnlyMode ? "min-h-0 flex-1 auto-rows-fr" : ""}`}>
             <PanelShell
-              title="Realtime Agent"
-              description="Direct voice chat."
-              icon={<WandSparkles className="size-4" />}
+              title="Realtime Voice Agent"
+              icon={<OpenAIWordmarkIcon />}
               headerRight={
                 <RealtimeStatusBadge isMuted={isMicMuted} realtimeStatus={realtimeStatus} />
               }
@@ -1677,9 +2260,23 @@ export default function App() {
                         {realtimeConnectedAt ? formatDuration(realtimeElapsedSeconds) : "--:--"}
                       </span>
                       <Button
+                        variant="outline"
+                        className="h-8 rounded-full border border-white/12 bg-[#222925] px-3 text-[13px] font-medium text-zinc-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] hover:bg-[#28312b]"
+                        onClick={() => void handleClearChat()}
+                        title="Clear chat"
+                      >
+                        <Trash2 className="size-4" />
+                        Clear chat
+                      </Button>
+                      <Button
                         variant="destructive"
                         className="h-8 rounded-full border border-red-400/35 bg-[#5a2e28] px-3 text-[13px] font-medium text-red-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:bg-[#6a342d]"
-                        onClick={() => disconnectRealtime()}
+                        onClick={() => {
+                          const nextIntent = { ...persistedReconnectIntentRef.current, shouldReconnectRealtime: false };
+                          persistedReconnectIntentRef.current = nextIntent;
+                          writeStoredJson(STORAGE_KEYS.reconnectIntent, nextIntent);
+                          disconnectRealtime();
+                        }}
                         title="End call"
                       >
                         <PhoneOff className="size-4" />
@@ -1756,9 +2353,8 @@ export default function App() {
             </PanelShell>
 
             <PanelShell
-              title="Codex app-server"
-              description="Local Codex agent."
-              icon={<Cable className="size-4" />}
+              title="Codex"
+              icon={<CodexWordmarkIcon />}
               headerRight={<CodexStatusBadge codexState={currentCodexState} />}
               contentClassName={`flex flex-col space-y-4 ${paneOnlyMode ? "min-h-0 h-full" : "min-h-[36rem]"}`}
             >
@@ -1855,6 +2451,28 @@ export default function App() {
           ) : null}
         </div>
       </div>
+      {showExtraOverlay ? (
+        <div className="pointer-events-none fixed bottom-4 right-4 z-[120]">
+          <div className="pointer-events-auto flex items-center gap-3 rounded-2xl border border-white/10 bg-[#151b18]/95 px-3 py-3 shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-md">
+            <div className="hidden text-[11px] font-medium tracking-[0.12em] text-zinc-500 sm:block">
+              DEBUG
+            </div>
+            <button
+              type="button"
+              className={`rounded-xl border border-white/10 bg-[#222925] p-2.5 text-zinc-100 transition hover:bg-[#2a332d] ${
+                copyLogsState === "copied" ? "text-[#b9f075]" : copyLogsState === "error" ? "text-red-300" : ""
+              }`}
+              onClick={() => {
+                void handleCopyLogs();
+              }}
+              title="Copy logs"
+              aria-label="Copy logs"
+            >
+              <Copy className="size-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

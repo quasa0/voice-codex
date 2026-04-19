@@ -19,7 +19,17 @@ import { CODEX_MODEL, CODEX_REASONING_EFFORT, getCodexProjectCwd } from "./codex
 let nextId = 1;
 
 function nowTime() {
-  return new Date().toISOString().slice(11, 19);
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 2,
+    hour12: false,
+  }).format(new Date());
+}
+
+function nowMs() {
+  return Date.now();
 }
 
 function newActivityId() {
@@ -97,10 +107,23 @@ function messageRequestsUserInput(text: string) {
     "need clarity",
     "need more direction",
     "need more detail",
+    "need a constraint",
+    "need constraint",
     "which ",
     "what kind",
     "what would you like",
     "what do you want",
+    "pick one",
+    "pick a ",
+    "pick any",
+    "choose one",
+    "choose a ",
+    "send me",
+    "reply with",
+    "use this format",
+    "give me these",
+    "give me the",
+    "start with",
     "let me know if",
     "if you want me to",
   ].some((phrase) => lowered.includes(phrase));
@@ -336,17 +359,24 @@ function getEventTurnId(params: unknown): string | null {
   return null;
 }
 
-export function useCodexWebSocket() {
+interface UseCodexWebSocketOptions {
+  initialLog?: LogEntry[];
+  initialAgentEvents?: AgentEvent[];
+  initialCodexMessages?: CodexMessage[];
+  initialSegments?: CodexSegment[];
+}
+
+export function useCodexWebSocket(options: UseCodexWebSocketOptions = {}) {
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
-  const [log, setLog] = useState<LogEntry[]>([]);
-  const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
+  const [log, setLog] = useState<LogEntry[]>(() => options.initialLog ?? []);
+  const [agentEvents, setAgentEvents] = useState<AgentEvent[]>(() => options.initialAgentEvents ?? []);
   const [thread, setThread] = useState<Thread | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [account, setAccount] = useState<AccountInfo | null>(null);
-  const [codexMessages, setCodexMessages] = useState<CodexMessage[]>([]);
+  const [codexMessages, setCodexMessages] = useState<CodexMessage[]>(() => options.initialCodexMessages ?? []);
   const [activeTurnStatus, setActiveTurnStatus] = useState<"idle" | "running" | "error">("idle");
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
-  const [segments, setSegments] = useState<CodexSegment[]>([]);
+  const [segments, setSegments] = useState<CodexSegment[]>(() => options.initialSegments ?? []);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRef = useRef<Map<number, { resolve: (msg: JsonRpcMessage) => void; reject: (error: Error) => void }>>(
@@ -414,6 +444,7 @@ export function useCodexWebSocket() {
           ? {
               ...updater(segment),
               updatedAt: nowTime(),
+              updatedAtMs: nowMs(),
             }
           : segment,
       ),
@@ -422,6 +453,7 @@ export function useCodexWebSocket() {
 
   const beginSegment = useCallback((mode: CodexSegmentMode, sourceUtterance: string) => {
     const createdAt = nowTime();
+    const createdAtMs = nowMs();
     const segmentId = newSegmentId();
     const segment: CodexSegment = {
       id: segmentId,
@@ -430,7 +462,9 @@ export function useCodexWebSocket() {
       codexState: "running",
       relayState: "not_spoken",
       createdAt,
+      createdAtMs,
       updatedAt: createdAt,
+      updatedAtMs: createdAtMs,
       turnId: mode === "steer" ? activeTurnId : null,
       latestMilestone: null,
       blockingQuestion: null,
@@ -439,6 +473,8 @@ export function useCodexWebSocket() {
       filesEdited: [],
       commandsRun: [],
       activities: [],
+      lastUserCheckInAt: null,
+      lastRelayedActivityIndex: -1,
     };
 
     activeSegmentIdRef.current = segmentId;
@@ -648,7 +684,7 @@ export function useCodexWebSocket() {
       {
         id: ++logIdRef.current,
         direction,
-        timestamp: new Date().toISOString().slice(11, 23),
+        timestamp: nowTime(),
         message,
       },
     ]);
@@ -663,7 +699,7 @@ export function useCodexWebSocket() {
         method,
         summary: summarizeEvent(method, params),
         raw: params,
-        timestamp: new Date().toISOString().slice(11, 23),
+        timestamp: nowTime(),
         segmentId: segmentId ?? null,
       },
     ]);
@@ -720,20 +756,22 @@ export function useCodexWebSocket() {
     await listModels().catch(() => {});
   }, [send, readAccount, listModels]);
 
-  const connect = useCallback((url: string) => {
+  const connect = useCallback((url: string, preserveHistory = false) => {
     if (wsRef.current) {
       wsRef.current.close();
     }
     setStatus("connecting");
-    setLog([]);
-    setAgentEvents([]);
+    if (!preserveHistory) {
+      setLog([]);
+      setAgentEvents([]);
+      setCodexMessages([]);
+      setSegments([]);
+    }
     setThread(null);
     setModels([]);
     setAccount(null);
-    setCodexMessages([]);
     setActiveTurnStatus("idle");
     setActiveTurnId(null);
-    setSegments([]);
     assistantMessageIdByItemRef.current.clear();
     progressMessageIdByItemRef.current.clear();
     turnSegmentIdRef.current.clear();
@@ -1041,7 +1079,9 @@ export function useCodexWebSocket() {
     wsRef.current?.close();
   }, []);
 
-  const startThread = useCallback(async (_cwd: string, _model: string): Promise<Thread> => {
+  const startThread = useCallback(async (cwd?: string, model?: string): Promise<Thread> => {
+    void cwd;
+    void model;
     const resp = await send("thread/start", {
       model: CODEX_MODEL,
       cwd: getCodexProjectCwd(),
@@ -1148,6 +1188,7 @@ export function useCodexWebSocket() {
     steerTurn,
     interruptTurn,
     beginSegment,
+    updateSegment,
     setSegmentRelayState,
     addSystemMessage,
     wsRef,
