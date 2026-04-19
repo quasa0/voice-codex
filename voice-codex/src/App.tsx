@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, Cable, Mic, MicOff, Play, Radio, Send, SkipForward, Square, TerminalSquare, WandSparkles } from "lucide-react";
+import { Activity, Cable, Mic, MicOff, PhoneOff, Play, Radio, Send, SkipForward, TerminalSquare, WandSparkles } from "lucide-react";
 import { useCodexWebSocket } from "./useCodexWebSocket";
 import { useOpenAIRealtime } from "./useOpenAIRealtime";
 import type { OpenAIRealtimeStatus } from "./useOpenAIRealtime";
@@ -1214,7 +1214,7 @@ export default function App() {
                       onClick={() => disconnectRealtime()}
                       title="End call"
                     >
-                      <Square className="size-4" />
+                      <PhoneOff className="size-4" />
                       End call
                     </Button>
                   </div>
