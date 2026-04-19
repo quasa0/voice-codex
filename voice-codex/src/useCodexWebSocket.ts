@@ -36,6 +36,11 @@ type IdeFocusTarget = {
   lineEnd?: number;
 };
 
+type SerializedFocusTarget = {
+  target: string;
+  openedAt: number;
+};
+
 function trimWrappedQuotes(value: string) {
   return value.replace(/^['"]|['"]$/g, "");
 }
@@ -162,10 +167,29 @@ function extractEditedAbsolutePath(item: Record<string, unknown>) {
     item.targetPath,
     item.relativePath,
     item.uri,
+    (item.file as Record<string, unknown> | undefined)?.path,
+    (item.file as Record<string, unknown> | undefined)?.filePath,
+    (item.change as Record<string, unknown> | undefined)?.path,
+    (item.change as Record<string, unknown> | undefined)?.filePath,
+    ((item.changes as Array<Record<string, unknown>> | undefined)?.[0])?.path,
+    ((item.changes as Array<Record<string, unknown>> | undefined)?.[0])?.filePath,
+    ((item.edits as Array<Record<string, unknown>> | undefined)?.[0])?.path,
+    ((item.edits as Array<Record<string, unknown>> | undefined)?.[0])?.filePath,
   ].find((value) => typeof value === "string" && value.trim());
-  if (typeof pathCandidate !== "string") return null;
-  const normalized = trimWrappedQuotes(pathCandidate.trim());
-  return joinProjectPath(projectCwd, normalized);
+  if (typeof pathCandidate === "string") {
+    const normalized = trimWrappedQuotes(pathCandidate.trim());
+    return joinProjectPath(projectCwd, normalized);
+  }
+
+  const patchText = String(item.patch ?? item.diff ?? item.unifiedDiff ?? item.output ?? item.summary ?? item.description ?? "");
+  const patchPathMatch =
+    patchText.match(/^\+\+\+\s+b\/([^\n]+)/m) ??
+    patchText.match(/^---\s+a\/([^\n]+)/m) ??
+    patchText.match(/^\*\*\*\s+Update File:\s+([^\n]+)/m) ??
+    patchText.match(/^\*\*\*\s+Add File:\s+([^\n]+)/m) ??
+    patchText.match(/(?:^|\n)M\s+([^\n]+)/m);
+  if (!patchPathMatch?.[1]) return null;
+  return joinProjectPath(projectCwd, trimWrappedQuotes(patchPathMatch[1].trim()));
 }
 
 function parseLineNumber(value: unknown): number | undefined {
@@ -316,7 +340,7 @@ export function useCodexWebSocket() {
   const activeTurnStatusRef = useRef<"idle" | "running" | "error">("idle");
   const activeTurnIdRef = useRef<string | null>(null);
   const codexMessagesRef = useRef<CodexMessage[]>([]);
-  const lastIdeOpenedTargetRef = useRef<string | null>(null);
+  const lastIdeOpenedTargetRef = useRef<SerializedFocusTarget | null>(null);
 
   useEffect(() => {
     codexMessagesRef.current = codexMessages;
@@ -340,8 +364,14 @@ export function useCodexWebSocket() {
       lineStart: focusTarget.lineStart ?? null,
       lineEnd: focusTarget.lineEnd ?? null,
     });
-    if (lastIdeOpenedTargetRef.current === serializedTarget) return;
-    lastIdeOpenedTargetRef.current = serializedTarget;
+    const now = Date.now();
+    if (
+      lastIdeOpenedTargetRef.current?.target === serializedTarget &&
+      now - lastIdeOpenedTargetRef.current.openedAt < 350
+    ) {
+      return;
+    }
+    lastIdeOpenedTargetRef.current = { target: serializedTarget, openedAt: now };
 
     if (window.IDEBridge?.focusFile) {
       window.IDEBridge.focusFile({
@@ -495,7 +525,7 @@ export function useCodexWebSocket() {
   const noteSegmentFileChange = useCallback((segmentId: string | null | undefined, item: Record<string, unknown>) => {
     if (!segmentId) return;
     const editedPath = extractEditedPath(item);
-    const absoluteEditedPath = extractEditedAbsolutePath(item);
+    const absoluteEditedPath = extractEditedAbsolutePath(item) ?? (editedPath ? joinProjectPath(getCodexProjectCwd(), editedPath) : null);
     const fileChangeLineRange = extractFileChangeLineRange(item);
     openFileInIde(absoluteEditedPath ? { path: absoluteEditedPath, ...fileChangeLineRange } : null);
     const milestone = truncateLine(String(item.summary ?? item.description ?? "Updated files"));
