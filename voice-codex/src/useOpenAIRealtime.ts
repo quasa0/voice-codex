@@ -140,6 +140,16 @@ export function useOpenAIRealtime() {
     setMessages((prev) => prev.filter((message) => !(message.id === id && message.source === "voice-pending")));
   }, []);
 
+  const finalizeStreamingAssistantMessages = useCallback(() => {
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.role === "assistant" && message.status === "streaming" && message.text.trim()
+          ? { ...message, status: "final" }
+          : message,
+      ),
+    );
+  }, []);
+
   const addLog = useCallback((direction: OpenAIRealtimeLogEntry["direction"], label: string, body: string) => {
     setLogs((prev) => [
       ...prev,
@@ -244,12 +254,13 @@ export function useOpenAIRealtime() {
   }, [sendClientEvent]);
 
   const cancelAssistantResponse = useCallback(() => {
+    finalizeStreamingAssistantMessages();
     sendClientEvent("response.cancel", { type: "response.cancel" });
     sendClientEvent("output_audio_buffer.clear", { type: "output_audio_buffer.clear" });
 
     clearAssistantSpeakingTimeout();
     setIsAssistantSpeaking(false);
-  }, [clearAssistantSpeakingTimeout, sendClientEvent]);
+  }, [clearAssistantSpeakingTimeout, finalizeStreamingAssistantMessages, sendClientEvent]);
 
   const connect = useCallback(
     async ({ model, voice, instructions }: ConnectOptions) => {
@@ -429,7 +440,13 @@ export function useOpenAIRealtime() {
             if (itemId) {
               const hiddenSeq = assistantHiddenResponseSeqByItemRef.current.get(itemId);
               if (hiddenSeq !== undefined && hiddenSeq <= invalidatedHiddenResponseSeqRef.current) {
-                setMessages((prev) => prev.filter((message) => message.id !== itemId));
+                setMessages((prev) =>
+                  prev.map((message) =>
+                    message.id === itemId && message.text.trim()
+                      ? { ...message, status: "final" }
+                      : message,
+                  ),
+                );
                 assistantHiddenResponseSeqByItemRef.current.delete(itemId);
                 pendingTextResponseRef.current = null;
                 return;
