@@ -210,26 +210,31 @@ function buildSegmentReadEditSummary(segment: CodexSegment | null) {
   return parts.join(" ") || null;
 }
 
-function messageIsBriefStatusCheckin(normalized: string) {
-  const trimmed = normalized.trim();
-  if (!trimmed) return false;
+function summarizeRunningSegmentForSpeech(segment: CodexSegment | null) {
+  if (!segment) return "Codex is idle right now.";
 
-  return [
-    "can u tell me",
-    "can you tell me",
-    "so?",
-    "status?",
-    "update?",
-    "is it working",
-    "is it still working",
-    "still working?",
-    "did it finish?",
-    "did it finish",
-    "is it done?",
-    "is it done",
-    "done?",
-    "finished?",
-  ].some((phrase) => trimmed === phrase || trimmed.startsWith(`${phrase} `));
+  const workingLabel = getSegmentWorkingLabel(segment);
+  if (workingLabel === "waiting for input...") {
+    return "Codex is waiting for input.";
+  }
+
+  if (workingLabel === "reading files...") {
+    return "Codex is reading files.";
+  }
+
+  if (workingLabel === "running checks...") {
+    return "Codex is running checks.";
+  }
+
+  if (workingLabel === "running command...") {
+    return "Codex is running a command.";
+  }
+
+  if (workingLabel?.startsWith("editing ")) {
+    return `Codex is ${workingLabel.replace(/\.\.\.$/, ".")}`;
+  }
+
+  return "Codex is working.";
 }
 
 function buildExactCodexRelayReply(
@@ -272,12 +277,6 @@ function buildExactCodexRelayReply(
       : getSegmentFirstLine(segment.finalOutcome);
   const latestMilestone = getSegmentFirstLine(segment.latestMilestone);
   const readEditSummary = buildSegmentReadEditSummary(segment);
-  const briefStatusCheckin = messageIsBriefStatusCheckin(normalized);
-
-  if (segment.codexState === "running" && briefStatusCheckin) {
-    if (latestMilestone) return `Codex is still working. Latest step: ${latestMilestone}`;
-    return "Codex is still working.";
-  }
 
   if (asksLastMessage) {
     if (blockingQuestion) return `Codex's last message was: ${blockingQuestion}`;
@@ -310,6 +309,10 @@ function buildExactCodexRelayReply(
     if (latestMilestone) {
       return [lead, `Latest step: ${latestMilestone}`, readEditSummary].filter(Boolean).join(" ").slice(0, 320);
     }
+  }
+
+  if (segment.codexState === "running") {
+    return summarizeRunningSegmentForSpeech(segment);
   }
 
   return summarizeSegmentStatus(segment, agentEvents);
