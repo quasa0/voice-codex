@@ -58,6 +58,28 @@ export function useOpenAIRealtime() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const pendingTextResponseRef = useRef<string | null>(null);
   const isMicMutedRef = useRef(true);
+  const assistantSpeakingTimeoutRef = useRef<number | null>(null);
+
+  const clearAssistantSpeakingTimeout = useCallback(() => {
+    if (assistantSpeakingTimeoutRef.current !== null) {
+      window.clearTimeout(assistantSpeakingTimeoutRef.current);
+      assistantSpeakingTimeoutRef.current = null;
+    }
+  }, []);
+
+  const setAssistantSpeakingWithGrace = useCallback((speaking: boolean, delayMs = 0) => {
+    clearAssistantSpeakingTimeout();
+
+    if (speaking || delayMs <= 0) {
+      setIsAssistantSpeaking(speaking);
+      return;
+    }
+
+    assistantSpeakingTimeoutRef.current = window.setTimeout(() => {
+      setIsAssistantSpeaking(false);
+      assistantSpeakingTimeoutRef.current = null;
+    }, delayMs);
+  }, [clearAssistantSpeakingTimeout]);
 
   const upsertUserVoiceMessage = useCallback((id: string, text: string, status: "capturing" | "partial" | "final", source: "voice" | "voice-pending") => {
     setMessages((prev) => {
@@ -124,10 +146,11 @@ export function useOpenAIRealtime() {
     isMicMutedRef.current = true;
     setConnectedAt(null);
     setElapsedSeconds(0);
+    clearAssistantSpeakingTimeout();
     setIsAssistantSpeaking(false);
 
     setStatus(nextStatus);
-  }, []);
+  }, [clearAssistantSpeakingTimeout]);
 
   const requestResponse = useCallback(() => {
     const dc = dcRef.current;
@@ -309,11 +332,11 @@ export function useOpenAIRealtime() {
           }
 
           if (type === "output_audio_buffer.started") {
-            setIsAssistantSpeaking(true);
+            setAssistantSpeakingWithGrace(true);
           }
 
           if (type === "response.output_audio.done" || type === "response.done") {
-            setIsAssistantSpeaking(false);
+            setAssistantSpeakingWithGrace(false, 1500);
           }
 
         } catch {
@@ -356,7 +379,7 @@ export function useOpenAIRealtime() {
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
       addLog("meta", "webrtc-answer", "Accepted OpenAI Realtime SDP answer");
     },
-    [addLog, disconnect, removePendingVoiceMessage, upsertUserVoiceMessage],
+    [addLog, disconnect, removePendingVoiceMessage, setAssistantSpeakingWithGrace, upsertUserVoiceMessage],
   );
 
   const sendText = useCallback(
@@ -426,8 +449,9 @@ export function useOpenAIRealtime() {
     const cancelEvent = { type: "response.cancel" };
     dc.send(JSON.stringify(cancelEvent));
     addLog("client", "response.cancel", JSON.stringify(cancelEvent, null, 2));
+    clearAssistantSpeakingTimeout();
     setIsAssistantSpeaking(false);
-  }, [addLog]);
+  }, [addLog, clearAssistantSpeakingTimeout]);
 
   useEffect(() => {
     if (!connectedAt) return;
@@ -437,7 +461,10 @@ export function useOpenAIRealtime() {
     return () => window.clearInterval(interval);
   }, [connectedAt]);
 
-  useEffect(() => () => disconnect(), [disconnect]);
+  useEffect(() => () => {
+    clearAssistantSpeakingTimeout();
+    disconnect();
+  }, [clearAssistantSpeakingTimeout, disconnect]);
 
   return {
     status,
