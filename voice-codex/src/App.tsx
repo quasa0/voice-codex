@@ -605,24 +605,21 @@ function CodexConversationPanel({
   const animateWorkingRow = activeSegment?.codexState === "running";
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-xl border border-white/8 bg-[#171d1b] p-3">
-      <ScrollArea className="min-h-0 flex-1">
-        <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-1.5"}>
+    <div className="flex h-full min-h-0 flex-col rounded-[1.55rem] border border-white/8 bg-[#171d1b] px-4 py-4">
+      <ScrollArea className="min-h-0 flex-1 pr-3">
+        <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-4"}>
           {messages.length === 0 ? (
-            <div className="flex w-full max-w-md items-center justify-center rounded-2xl border border-dashed border-white/8 bg-white/[0.02] px-6 py-8 text-center text-sm text-zinc-500">
-              No Codex messages yet.
+            <div className="flex min-h-full items-center justify-center text-center">
+              <div className="max-w-md space-y-2 px-6">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-zinc-600">conversation</div>
+                <div className="text-[15px] text-zinc-500">No Codex messages yet.</div>
+              </div>
             </div>
           ) : (
             messages.map((message) => (
               <div
                 key={message.id}
-                className={`py-2 ${
-                  message.role === "assistant"
-                    ? "text-left"
-                    : message.role === "system"
-                      ? "text-left"
-                      : "text-right"
-                }`}
+                className={`space-y-1.5 py-0.5 ${message.role === "user" ? "text-right" : "text-left"}`}
               >
                 {message.role === "system" ? (
                   <div className="relative flex min-h-6 items-center justify-center">
@@ -636,19 +633,30 @@ function CodexConversationPanel({
                     <TimestampLabel timestamp={message.timestamp} className="absolute right-0" />
                   </div>
                 ) : (
-                  <div className={`space-y-1 ${message.role === "assistant" ? "mr-12" : "ml-12"}`}>
+                  <>
                     <div
-                      className={`flex flex-wrap gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] text-zinc-500 ${
+                      className={`flex items-center gap-2 text-[11px] text-zinc-500 ${
                         message.role === "assistant" ? "justify-start" : "justify-end"
                       }`}
                     >
-                      {codexMessagePhaseLabel(message) ? <span>{codexMessagePhaseLabel(message)}</span> : null}
-                      <span>{formatLocalTime(message.timestamp)}</span>
+                      {codexMessagePhaseLabel(message) ? (
+                        <span className={message.status === "streaming" ? "text-[#b9f075]" : "text-zinc-500"}>
+                          {codexMessagePhaseLabel(message)}
+                        </span>
+                      ) : null}
+                      <TimestampLabel timestamp={message.timestamp} />
                     </div>
-                    <div className="whitespace-pre-wrap text-[13px] leading-5 text-zinc-100">
+                    <div
+                      className={`whitespace-pre-wrap text-[15px] leading-[1.65] ${
+                        message.role === "assistant" ? "text-zinc-100" : "text-zinc-300"
+                      }`}
+                    >
                       {message.text || "..."}
+                      {message.role === "assistant" && message.status === "streaming" ? (
+                        <span className="ml-1 inline-block h-[14px] w-[6px] animate-pulse align-[-2px] rounded-sm bg-[#b9f075]" />
+                      ) : null}
                     </div>
-                  </div>
+                  </>
                 )}
               </div>
             ))
