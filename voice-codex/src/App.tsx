@@ -97,17 +97,35 @@ function summarizeRecentCommands(agentEvents: AgentEvent[]) {
   return `Read ${paths.slice(0, -1).join(", ")}, and ${paths.at(-1)}.`;
 }
 
+function getLatestHandoffBoundary(codexMessages: CodexMessage[]) {
+  return [...codexMessages]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === "system" &&
+        (message.eventKind === "start" || message.eventKind === "interrupt"),
+    )?.timestamp ?? null;
+}
+
 function summarizeCurrentCodexActivity(
   activeTurnStatus: "idle" | "running" | "error",
   agentEvents: AgentEvent[],
   codexMessages: CodexMessage[],
 ) {
-  const recentEvents = [...agentEvents].reverse();
+  const boundaryTimestamp = getLatestHandoffBoundary(codexMessages);
+  const scopedEvents = boundaryTimestamp
+    ? agentEvents.filter((event) => event.timestamp >= boundaryTimestamp)
+    : agentEvents;
+  const scopedMessages = boundaryTimestamp
+    ? codexMessages.filter((message) => message.timestamp >= boundaryTimestamp)
+    : codexMessages;
+
+  const recentEvents = [...scopedEvents].reverse();
   const latestPlan = recentEvents.find((event) => event.method === "turn/plan/updated");
-  const recentCommandSummary = summarizeRecentCommands(agentEvents);
+  const recentCommandSummary = summarizeRecentCommands(scopedEvents);
 
   if (activeTurnStatus !== "running") {
-    const latestCodexReply = [...codexMessages]
+    const latestCodexReply = [...scopedMessages]
       .reverse()
       .find((message) => message.role === "assistant" && message.status === "final" && message.text.trim());
 
@@ -134,7 +152,7 @@ function summarizeCurrentCodexActivity(
       typeof (event.raw as { item?: { type?: string } })?.item?.type === "string" &&
       (event.raw as { item?: { type?: string } }).item?.type === "commandExecution",
   );
-  const latestAssistant = [...codexMessages]
+  const latestAssistant = [...scopedMessages]
     .reverse()
     .find((message) => message.role === "assistant" && message.text.trim());
 
