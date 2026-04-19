@@ -606,7 +606,7 @@ function CodexConversationPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col rounded-xl border border-white/8 bg-[#171d1b] p-3">
-      <ScrollArea className="min-h-0 flex-1 pr-3">
+      <ScrollArea className="min-h-0 flex-1">
         <div className={messages.length === 0 ? "flex min-h-full items-center justify-center" : "flex flex-col-reverse gap-1.5"}>
           {messages.length === 0 ? (
             <div className="flex w-full max-w-md items-center justify-center rounded-2xl border border-dashed border-white/8 bg-white/[0.02] px-6 py-8 text-center text-sm text-zinc-500">
@@ -656,7 +656,7 @@ function CodexConversationPanel({
           {workingLabel ? (
             <div className="py-1.5">
               <div
-                className={`relative -mr-3 flex min-h-6 w-[calc(100%+0.75rem)] items-center gap-3 overflow-hidden rounded-full border border-[#b9f075]/10 bg-[#b9f075]/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-zinc-500 ${
+                className={`relative -mx-3 flex min-h-6 w-[calc(100%+1.5rem)] items-center gap-3 overflow-hidden rounded-full border border-[#b9f075]/10 bg-[#b9f075]/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-zinc-500 ${
                   animateWorkingRow ? "codex-working-row" : ""
                 }`}
               >
