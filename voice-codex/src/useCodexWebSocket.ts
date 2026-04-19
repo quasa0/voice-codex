@@ -65,6 +65,7 @@ type IdeFocusTarget = {
   path: string;
   lineStart?: number;
   lineEnd?: number;
+  preferDiff?: boolean;
 };
 
 type SerializedFocusTarget = {
@@ -455,6 +456,7 @@ export function useCodexWebSocket(options: UseCodexWebSocketOptions = {}) {
       path: normalizedPath,
       lineStart: focusTarget.lineStart ?? null,
       lineEnd: focusTarget.lineEnd ?? null,
+      preferDiff: focusTarget.preferDiff ?? false,
     });
     const now = Date.now();
     if (
@@ -470,6 +472,7 @@ export function useCodexWebSocket(options: UseCodexWebSocketOptions = {}) {
         path: normalizedPath,
         lineStart: focusTarget.lineStart,
         lineEnd: focusTarget.lineEnd,
+        preferDiff: focusTarget.preferDiff,
       });
       return;
     }
@@ -571,7 +574,7 @@ export function useCodexWebSocket(options: UseCodexWebSocketOptions = {}) {
     const commandLineRange = extractCommandLineRange(command);
     const commandKind = classifyCommandKind(command);
     const commandSummary = summarizeCommandLabel(item);
-    openFileInIde(idePath ? { path: idePath, ...commandLineRange } : null);
+    openFileInIde(idePath ? { path: idePath, ...commandLineRange, preferDiff: false } : null);
     updateSegment(segmentId, (segment) => ({
       ...segment,
       codexState: "running",
@@ -639,7 +642,7 @@ export function useCodexWebSocket(options: UseCodexWebSocketOptions = {}) {
     const editedPath = extractEditedPath(item);
     const absoluteEditedPath = extractEditedAbsolutePath(item) ?? (editedPath ? joinProjectPath(getCodexProjectCwd(), editedPath) : null);
     const fileChangeLineRange = extractFileChangeLineRange(item);
-    openFileInIde(absoluteEditedPath ? { path: absoluteEditedPath, ...fileChangeLineRange } : null);
+    openFileInIde(absoluteEditedPath ? { path: absoluteEditedPath, ...fileChangeLineRange, preferDiff: true } : null);
     const milestone = truncateLine(String(item.summary ?? item.description ?? "Updated files"));
     updateSegment(segmentId, (segment) => ({
       ...segment,

@@ -1,6 +1,9 @@
 package com.github.quasa0.realtimecodexinwebstormplugin.toolWindow
 
 import com.intellij.icons.AllIcons
+import com.intellij.diff.DiffContentFactory
+import com.intellij.diff.DiffManager
+import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.ScrollType
@@ -11,7 +14,10 @@ import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vcs.changes.ChangeListManager
+import com.intellij.openapi.vcs.changes.ContentRevision
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.openapi.project.DumbAwareAction
@@ -47,7 +53,7 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                 ApplicationManager.getApplication().invokeLater {
                     val normalizedPath = requestedPath.trim()
                     if (normalizedPath.isEmpty()) return@invokeLater
-                    focusFileInIde(project, IdeFocusTarget(path = normalizedPath), browser.component)
+                    focusFileInIde(project, IdeFocusTarget(path = normalizedPath), browser.component, preferDiff = false)
                 }
 
                 null
@@ -58,7 +64,7 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                 ApplicationManager.getApplication().invokeLater {
                     val target = parseFocusTarget(rawPayload)
                     if (target != null) {
-                        focusFileInIde(project, target, browser.component)
+                        focusFileInIde(project, target, browser.component, preferDiff = false)
                     }
                 }
 
@@ -114,7 +120,12 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                                 ${openFileQuery.inject("path")}
                               },
                               focusFile: function(target) {
-                                const payload = [target?.path ?? "", target?.lineStart ?? "", target?.lineEnd ?? ""].join("\t");
+                                const payload = [
+                                  target?.path ?? "",
+                                  target?.lineStart ?? "",
+                                  target?.lineEnd ?? "",
+                                  target?.preferDiff ? "1" : ""
+                                ].join("\t");
                                 ${focusFileQuery.inject("payload")}
                               }
                             };
@@ -187,10 +198,16 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
                 path = path,
                 lineStart = parts.getOrNull(1)?.trim()?.toIntOrNull(),
                 lineEnd = parts.getOrNull(2)?.trim()?.toIntOrNull(),
+                preferDiff = parts.getOrNull(3)?.trim() == "1",
             )
         }
 
-        private fun focusFileInIde(project: Project, target: IdeFocusTarget, focusComponentToRestore: Component? = null) {
+        private fun focusFileInIde(
+            project: Project,
+            target: IdeFocusTarget,
+            focusComponentToRestore: Component? = null,
+            preferDiff: Boolean = false,
+        ) {
             val ioFile = if (target.path.startsWith("/")) {
                 File(target.path)
             } else {
@@ -199,6 +216,11 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
             }
 
             val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(ioFile) ?: return
+            val shouldPreferDiff = preferDiff || target.preferDiff
+            if (shouldPreferDiff && openDiffForChangedFile(project, virtualFile)) {
+                return
+            }
+
             val fileEditorManager = FileEditorManager.getInstance(project)
             val zeroBasedLine = (target.lineStart ?: 1).coerceAtLeast(1) - 1
             val editor = fileEditorManager.openTextEditor(
@@ -246,6 +268,68 @@ class VoiceCodexToolWindowFactory : ToolWindowFactory {
             restoreFocus(focusComponentToRestore)
         }
 
+        private fun openDiffForChangedFile(project: Project, virtualFile: VirtualFile): Boolean {
+            val change = ChangeListManager.getInstance(project).getChange(virtualFile) ?: return false
+            val beforeContent = createRevisionDiffContent(project, change.beforeRevision, virtualFile, preferCurrentFile = false) ?: return false
+            val afterContent = createRevisionDiffContent(project, change.afterRevision, virtualFile, preferCurrentFile = true) ?: return false
+            val diffTitle = buildDiffTitle(project, virtualFile)
+            closeExistingDiffTabs(project, diffTitle)
+
+            val request = SimpleDiffRequest(
+                diffTitle,
+                beforeContent,
+                afterContent,
+                "Before",
+                "Current",
+            )
+            DiffManager.getInstance().showDiff(project, request)
+            return true
+        }
+
+        private fun createRevisionDiffContent(
+            project: Project,
+            revision: ContentRevision?,
+            virtualFile: VirtualFile,
+            preferCurrentFile: Boolean,
+        ): com.intellij.diff.contents.DiffContent? {
+            val factory = DiffContentFactory.getInstance()
+            if (revision == null) return factory.createEmpty()
+            if (preferCurrentFile && virtualFile.isValid) {
+                return factory.create(project, virtualFile)
+            }
+
+            val content = try {
+                revision.content
+            } catch (_: Exception) {
+                null
+            } ?: return factory.createEmpty()
+
+            return factory.create(project, content, virtualFile)
+        }
+
+        private fun buildDiffTitle(project: Project, virtualFile: VirtualFile): String {
+            val basePath = project.basePath
+            val absolutePath = virtualFile.path
+            val displayPath = if (basePath != null && absolutePath.startsWith("$basePath/")) {
+                absolutePath.removePrefix("$basePath/")
+            } else {
+                virtualFile.name
+            }
+            return "Changes in $displayPath"
+        }
+
+        private fun closeExistingDiffTabs(project: Project, diffTitle: String) {
+            val fileEditorManager = FileEditorManager.getInstance(project)
+            fileEditorManager.openFiles
+                .filter { openFile ->
+                    openFile.name == diffTitle ||
+                        openFile.presentableName == diffTitle ||
+                        openFile.name.startsWith("Changes in ") ||
+                        openFile.presentableName.startsWith("Changes in ")
+                }
+                .forEach(fileEditorManager::closeFile)
+        }
+
         private fun restoreFocus(component: Component?) {
             if (component == null) return
             SwingUtilities.invokeLater {
@@ -259,4 +343,5 @@ private data class IdeFocusTarget(
     val path: String,
     val lineStart: Int? = null,
     val lineEnd: Int? = null,
+    val preferDiff: Boolean = false,
 )
