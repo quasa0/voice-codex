@@ -206,9 +206,22 @@ function buildSegmentReadEditSummary(segment: CodexSegment | null) {
   return parts.join(" ") || null;
 }
 
+function getLatestCodexCommand(segment: CodexSegment | null) {
+  return segment?.commandsRun.at(-1)?.trim() ?? "";
+}
+
+function latestCommandLooksLikeBuild(command: string) {
+  return /\b(?:npm|pnpm|yarn)\s+(?:run\s+)?build\b/.test(command);
+}
+
+function latestCommandLooksLikeChecks(command: string) {
+  return /\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|lint|check|typecheck|validate)\b/.test(command);
+}
+
 function summarizeRunningSegmentForSpeech(segment: CodexSegment | null) {
   if (!segment) return "Codex is idle right now.";
 
+  const latestCommand = getLatestCodexCommand(segment);
   const workingLabel = getSegmentWorkingLabel(segment);
   if (workingLabel === "waiting for input...") {
     return "Codex is waiting for input.";
@@ -219,6 +232,12 @@ function summarizeRunningSegmentForSpeech(segment: CodexSegment | null) {
   }
 
   if (workingLabel === "running checks...") {
+    if (latestCommandLooksLikeBuild(latestCommand)) {
+      return "Codex is running a build.";
+    }
+    if (latestCommandLooksLikeChecks(latestCommand)) {
+      return "Codex is running checks.";
+    }
     return "Codex is running checks.";
   }
 
@@ -260,6 +279,14 @@ function buildExactCodexRelayReply(
     normalized.includes("why did") ||
     normalized.includes("did it interrupt") ||
     normalized.includes("interrupt");
+  const asksAboutTiming =
+    normalized.includes("finish soon") ||
+    normalized.includes("how long left") ||
+    normalized.includes("how much longer") ||
+    normalized.includes("when will it finish") ||
+    normalized.includes("when's it done") ||
+    normalized.includes("time left") ||
+    normalized.includes("almost done");
 
   const latestAssistantMessage = [...segmentMessages]
     .reverse()
@@ -273,6 +300,7 @@ function buildExactCodexRelayReply(
       : getSegmentFirstLine(segment.finalOutcome);
   const latestMilestone = getSegmentFirstLine(segment.latestMilestone);
   const readEditSummary = buildSegmentReadEditSummary(segment);
+  const latestCommand = getLatestCodexCommand(segment);
 
   if (asksLastMessage) {
     if (blockingQuestion) return `Codex's last message was: ${blockingQuestion}`;
@@ -308,6 +336,15 @@ function buildExactCodexRelayReply(
   }
 
   if (segment.codexState === "running") {
+    if (asksAboutTiming) {
+      if (latestCommandLooksLikeBuild(latestCommand)) {
+        return "Hard to tell exactly. Codex is running a build right now.";
+      }
+      if (latestCommandLooksLikeChecks(latestCommand)) {
+        return "Hard to tell exactly. Codex is still running checks.";
+      }
+      return "Hard to tell exactly. Codex is still working.";
+    }
     return summarizeRunningSegmentForSpeech(segment);
   }
 
