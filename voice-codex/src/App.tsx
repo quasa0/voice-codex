@@ -268,12 +268,19 @@ function formatDuration(totalSeconds: number) {
 }
 
 function formatLocalTime(timestamp: string) {
+  const timeOnlyMatch = timestamp.match(/^(\d{2}:\d{2}:\d{2})(?:\.(\d+))?$/);
+  if (timeOnlyMatch) {
+    const [, base, fraction] = timeOnlyMatch;
+    return fraction ? `${base}.${fraction[0]}` : base;
+  }
+
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return timestamp;
   return new Intl.DateTimeFormat(undefined, {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
+    fractionalSecondDigits: 1,
     hour12: false,
   }).format(date);
 }
@@ -635,7 +642,10 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
             </div>
           ) : (
             messages.map((message) => (
-              <div key={message.id} className="space-y-1.5 py-0.5">
+              <div
+                key={message.id}
+                className={`space-y-1.5 py-0.5 ${message.role === "user" ? "text-right" : "text-left"}`}
+              >
                 {message.role === "system" ? (
                   <div className="relative flex min-h-6 items-center justify-center">
                     <span
@@ -651,10 +661,11 @@ function RealtimeConversationPanel({ messages }: { messages: RealtimeMessage[] }
                   </div>
                 ) : (
                   <>
-                    <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-                      <span className="text-[12.5px] font-semibold tracking-[-0.01em] text-zinc-300">
-                        {message.role === "assistant" ? "Codex" : "You"}
-                      </span>
+                    <div
+                      className={`flex items-center gap-2 text-[11px] text-zinc-500 ${
+                        message.role === "user" ? "justify-end" : "justify-start"
+                      }`}
+                    >
                       <span className="rounded-full border border-white/8 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-400">
                         {message.source}
                       </span>
