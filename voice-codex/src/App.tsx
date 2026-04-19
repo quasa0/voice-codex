@@ -889,17 +889,16 @@ export default function App() {
           (!pending.turnId || message.turnId === pending.turnId),
       );
 
-    if (!scopedReply) return;
-    if (lastNarratedCodexMessageIdRef.current === scopedReply.id) return;
-
     const codexSummary = summarizeCurrentCodexActivity("idle", agentEvents, codexMessages);
+    const relayKey = scopedReply?.id ?? `summary-${pending.turnId ?? pending.request}`;
+    if (lastNarratedCodexMessageIdRef.current === relayKey) return;
 
     pendingCodexNarrationRef.current = null;
-    lastNarratedCodexMessageIdRef.current = scopedReply.id;
+    lastNarratedCodexMessageIdRef.current = relayKey;
 
     try {
       sendRealtimeText(
-        `Codex finished. Give the user a very short summary of what changed or what Codex accomplished since the latest handoff. Do not read raw command output. Do not repeat the user's wording. Keep it to one or two short sentences. No invention.\n\nOriginal user request:\n${pending.request}\n\nCodex segment summary:\n${codexSummary}`,
+        `Codex finished. Give the user a very short spoken summary of what changed or what Codex accomplished since the latest handoff. Do not read raw command output. Do not repeat the user's wording. Keep it to one or two short sentences. End with one very short follow-up question, for example "Want tweaks?" No invention.\n\nOriginal user request:\n${pending.request}\n\nCodex segment summary:\n${codexSummary}`,
         { requestResponse: true, visible: false },
       );
     } catch (error) {
