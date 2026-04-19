@@ -656,7 +656,7 @@ function CodexConversationPanel({
           {workingLabel ? (
             <div className="py-1.5">
               <div
-                className={`relative -mx-3 flex min-h-6 w-[calc(100%+1.5rem)] items-center gap-3 overflow-hidden rounded-full border border-[#b9f075]/10 bg-[#b9f075]/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-zinc-500 ${
+                className={`relative flex min-h-6 w-full items-center gap-3 overflow-hidden rounded-full border border-[#b9f075]/10 bg-[#b9f075]/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-zinc-500 ${
                   animateWorkingRow ? "codex-working-row" : ""
                 }`}
               >
