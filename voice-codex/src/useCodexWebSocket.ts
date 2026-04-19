@@ -1,11 +1,90 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { JsonRpcMessage, LogEntry, AgentEvent, ConnectionStatus, Thread, ModelInfo, AccountInfo, CodexMessage } from "./types";
+import type {
+  JsonRpcMessage,
+  LogEntry,
+  AgentEvent,
+  ConnectionStatus,
+  Thread,
+  ModelInfo,
+  AccountInfo,
+  CodexMessage,
+  CodexSegment,
+  CodexRelayState,
+  CodexSegmentMode,
+} from "./types";
 import { CODEX_PROJECT_CWD, CODEX_MODEL, CODEX_REASONING_EFFORT } from "./codexConfig";
 
 let nextId = 1;
 
 function nowTime() {
   return new Date().toISOString().slice(11, 19);
+}
+
+function newSegmentId() {
+  return `segment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function truncateLine(text: string, maxLength = 220) {
+  const singleLine = text.trim().split("\n").find(Boolean) ?? text.trim();
+  return singleLine.slice(0, maxLength) || null;
+}
+
+function isCodexProgressMessage(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  return (
+    trimmed.startsWith("Plan update") ||
+    trimmed.startsWith("Completed:") ||
+    trimmed.startsWith("Running:") ||
+    trimmed.startsWith("Failed (") ||
+    trimmed.startsWith("Turn failed:")
+  );
+}
+
+function messageRequestsUserInput(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed || isCodexProgressMessage(trimmed)) return false;
+  if (trimmed.includes("?")) return true;
+
+  const lowered = trimmed.toLowerCase();
+  return [
+    "could you clarify",
+    "can you clarify",
+    "please clarify",
+    "need clarity",
+    "need more direction",
+    "need more detail",
+    "which ",
+    "what kind",
+    "what would you like",
+    "what do you want",
+    "let me know if",
+    "if you want me to",
+  ].some((phrase) => lowered.includes(phrase));
+}
+
+function extractTouchedPath(command: string) {
+  const match = command.match(/(?:cat|ls|nl -ba|sed -n '[^']+'|rg --files)\s+(['"]?)([^'"\n]+)\1/);
+  if (!match) return null;
+  const rawPath = match[2]?.trim();
+  if (!rawPath) return null;
+  const normalized = rawPath.replace(/^cd\s+[^&]+&&\s*/, "").trim();
+  const segments = normalized.split("/").filter(Boolean);
+  return segments.slice(-2).join("/") || normalized;
+}
+
+function extractEditedPath(item: Record<string, unknown>) {
+  const pathCandidate = [
+    item.path,
+    item.filePath,
+    item.targetPath,
+    item.relativePath,
+    item.uri,
+  ].find((value) => typeof value === "string" && value.trim());
+  if (typeof pathCandidate !== "string") return null;
+  const normalized = pathCandidate.trim();
+  const segments = normalized.split("/").filter(Boolean);
+  return segments.slice(-2).join("/") || normalized;
 }
 
 function summarizeCommandLabel(item: Record<string, unknown>) {
@@ -85,6 +164,7 @@ export function useCodexWebSocket() {
   const [codexMessages, setCodexMessages] = useState<CodexMessage[]>([]);
   const [activeTurnStatus, setActiveTurnStatus] = useState<"idle" | "running" | "error">("idle");
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
+  const [segments, setSegments] = useState<CodexSegment[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRef = useRef<Map<number, { resolve: (msg: JsonRpcMessage) => void; reject: (error: Error) => void }>>(
@@ -93,13 +173,160 @@ export function useCodexWebSocket() {
   const logIdRef = useRef(0);
   const assistantMessageIdByItemRef = useRef<Map<string, string>>(new Map());
   const progressMessageIdByItemRef = useRef<Map<string, string>>(new Map());
+  const turnSegmentIdRef = useRef<Map<string, string>>(new Map());
+  const pendingNextTurnSegmentIdRef = useRef<string | null>(null);
+  const activeSegmentIdRef = useRef<string | null>(null);
+
+  const updateSegment = useCallback((segmentId: string | null | undefined, updater: (segment: CodexSegment) => CodexSegment) => {
+    if (!segmentId) return;
+    setSegments((prev) =>
+      prev.map((segment) =>
+        segment.id === segmentId
+          ? {
+              ...updater(segment),
+              updatedAt: nowTime(),
+            }
+          : segment,
+      ),
+    );
+  }, []);
+
+  const beginSegment = useCallback((mode: CodexSegmentMode, sourceUtterance: string) => {
+    const createdAt = nowTime();
+    const segmentId = newSegmentId();
+    const segment: CodexSegment = {
+      id: segmentId,
+      sourceUtterance: sourceUtterance.trim(),
+      mode,
+      codexState: "running",
+      relayState: "not_spoken",
+      createdAt,
+      updatedAt: createdAt,
+      turnId: mode === "steer" ? activeTurnId : null,
+      latestMilestone: null,
+      blockingQuestion: null,
+      finalOutcome: null,
+      filesRead: [],
+      filesEdited: [],
+      commandsRun: [],
+    };
+
+    activeSegmentIdRef.current = segmentId;
+    if (mode !== "steer") {
+      pendingNextTurnSegmentIdRef.current = segmentId;
+    } else if (activeTurnId) {
+      turnSegmentIdRef.current.set(activeTurnId, segmentId);
+    }
+
+    setSegments((prev) => [...prev, segment]);
+    setCodexMessages((prev) => [
+      ...prev,
+      {
+        id: `system-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: "system",
+        text: mode === "start" ? "new turn" : mode,
+        status: "final",
+        timestamp: createdAt,
+        eventKind: mode,
+        segmentId,
+      },
+    ]);
+
+    return segmentId;
+  }, [activeTurnId]);
+
+  const bindSegmentToTurn = useCallback((segmentId: string | null | undefined, turnId: string | null | undefined) => {
+    if (!segmentId || !turnId) return;
+    turnSegmentIdRef.current.set(turnId, segmentId);
+    pendingNextTurnSegmentIdRef.current = pendingNextTurnSegmentIdRef.current === segmentId ? null : pendingNextTurnSegmentIdRef.current;
+    activeSegmentIdRef.current = segmentId;
+    updateSegment(segmentId, (segment) => ({
+      ...segment,
+      turnId,
+      codexState: "running",
+    }));
+  }, [updateSegment]);
+
+  const resolveSegmentId = useCallback((turnId?: string | null) => {
+    if (turnId) {
+      const mapped = turnSegmentIdRef.current.get(turnId);
+      if (mapped) return mapped;
+    }
+    return pendingNextTurnSegmentIdRef.current ?? activeSegmentIdRef.current;
+  }, []);
+
+  const noteSegmentCommand = useCallback((segmentId: string | null | undefined, item: Record<string, unknown>) => {
+    if (!segmentId) return;
+    const command = String(item.command ?? "").trim();
+    const touchedPath = extractTouchedPath(command);
+    updateSegment(segmentId, (segment) => ({
+      ...segment,
+      codexState: "running",
+      latestMilestone: summarizeCommandLabel(item),
+      commandsRun: command && !segment.commandsRun.includes(command)
+        ? [...segment.commandsRun, command].slice(-8)
+        : segment.commandsRun,
+      filesRead: touchedPath && !segment.filesRead.includes(touchedPath)
+        ? [...segment.filesRead, touchedPath].slice(-8)
+        : segment.filesRead,
+    }));
+  }, [updateSegment]);
+
+  const noteSegmentMessage = useCallback((segmentId: string | null | undefined, text: string, status: "streaming" | "final") => {
+    if (!segmentId) return;
+    const firstLine = truncateLine(text);
+    updateSegment(segmentId, (segment) => {
+      const blockingQuestion = status === "final" && messageRequestsUserInput(text) ? text.trim() : segment.blockingQuestion;
+      const finalOutcome =
+        status === "final" && !messageRequestsUserInput(text) && !isCodexProgressMessage(text) ? text.trim() : segment.finalOutcome;
+
+      return {
+        ...segment,
+        codexState:
+          status === "final" && messageRequestsUserInput(text)
+            ? "waiting_for_user"
+            : segment.codexState === "waiting_for_user" && status === "streaming"
+              ? "running"
+              : segment.codexState,
+        latestMilestone: firstLine ?? segment.latestMilestone,
+        blockingQuestion,
+        finalOutcome,
+      };
+    });
+  }, [updateSegment]);
+
+  const noteSegmentPlan = useCallback((segmentId: string | null | undefined, summary: string) => {
+    updateSegment(segmentId, (segment) => ({
+      ...segment,
+      codexState: "running",
+      latestMilestone: truncateLine(summary) ?? segment.latestMilestone,
+    }));
+  }, [updateSegment]);
+
+  const noteSegmentFileChange = useCallback((segmentId: string | null | undefined, item: Record<string, unknown>) => {
+    if (!segmentId) return;
+    const editedPath = extractEditedPath(item);
+    const milestone = truncateLine(String(item.summary ?? item.description ?? "Updated files"));
+    updateSegment(segmentId, (segment) => ({
+      ...segment,
+      codexState: "running",
+      latestMilestone: milestone ?? segment.latestMilestone,
+      filesEdited: editedPath && !segment.filesEdited.includes(editedPath)
+        ? [...segment.filesEdited, editedPath].slice(-8)
+        : segment.filesEdited,
+    }));
+  }, [updateSegment]);
+
+  const setSegmentRelayState = useCallback((segmentId: string, relayState: CodexRelayState) => {
+    updateSegment(segmentId, (segment) => ({ ...segment, relayState }));
+  }, [updateSegment]);
 
   const appendCodexMessage = useCallback((message: CodexMessage) => {
     setCodexMessages((prev) => [...prev, message]);
   }, []);
 
   const appendStreamingProgressMessage = useCallback(
-    (itemId: string, delta: string, turnId: string | null, fallbackPrefix = "Streaming output") => {
+    (itemId: string, delta: string, turnId: string | null, fallbackPrefix = "Streaming output", segmentId?: string | null) => {
       if (!itemId || !delta) return;
       const progressId = progressMessageIdByItemRef.current.get(itemId) ?? `progress-${itemId}`;
       progressMessageIdByItemRef.current.set(itemId, progressId);
@@ -109,7 +336,13 @@ export function useCodexWebSocket() {
         if (existing) {
           return prev.map((message) =>
             message.id === progressId
-              ? { ...message, text: `${message.text}${delta}`, status: "streaming", turnId: message.turnId ?? turnId }
+              ? {
+                  ...message,
+                  text: `${message.text}${delta}`,
+                  status: "streaming",
+                  turnId: message.turnId ?? turnId,
+                  segmentId: message.segmentId ?? segmentId ?? null,
+                }
               : message,
           );
         }
@@ -123,6 +356,7 @@ export function useCodexWebSocket() {
             status: "streaming",
             timestamp: nowTime(),
             turnId,
+            segmentId: segmentId ?? null,
           },
         ];
       });
@@ -140,6 +374,7 @@ export function useCodexWebSocket() {
       status: "final",
       timestamp: nowTime(),
       eventKind,
+      segmentId: activeSegmentIdRef.current,
     });
   }, [appendCodexMessage]);
 
@@ -166,7 +401,7 @@ export function useCodexWebSocket() {
     ]);
   }, []);
 
-  const addAgentEvent = useCallback((method: string, params: unknown) => {
+  const addAgentEvent = useCallback((method: string, params: unknown, segmentId?: string | null) => {
     setAgentEvents((prev) => [
       ...prev,
       {
@@ -176,6 +411,7 @@ export function useCodexWebSocket() {
         summary: summarizeEvent(method, params),
         raw: params,
         timestamp: new Date().toISOString().slice(11, 23),
+        segmentId: segmentId ?? null,
       },
     ]);
   }, []);
@@ -244,8 +480,12 @@ export function useCodexWebSocket() {
     setCodexMessages([]);
     setActiveTurnStatus("idle");
     setActiveTurnId(null);
+    setSegments([]);
     assistantMessageIdByItemRef.current.clear();
     progressMessageIdByItemRef.current.clear();
+    turnSegmentIdRef.current.clear();
+    pendingNextTurnSegmentIdRef.current = null;
+    activeSegmentIdRef.current = null;
 
     const ws = new WebSocket(url);
     wsRef.current = ws;
@@ -310,19 +550,40 @@ export function useCodexWebSocket() {
       // It's a notification or server-initiated request
       const method = (parsed as { method: string }).method;
       const params = (parsed as { params?: unknown }).params;
+      const turnId = getEventTurnId(params);
+      let segmentId = resolveSegmentId(turnId);
 
       if (method === "turn/started") {
         const turn = (params as { turn?: { id?: string } })?.turn;
         setActiveTurnStatus("running");
         setActiveTurnId(turn?.id ?? null);
+        segmentId = segmentId ?? pendingNextTurnSegmentIdRef.current;
+        bindSegmentToTurn(segmentId, turn?.id ?? null);
       }
 
       if (method === "turn/completed") {
         const turn = (params as { turn?: { status?: string; error?: { message?: string } } })?.turn;
-        const turnId = getEventTurnId(params);
+        segmentId = resolveSegmentId(turnId);
         setActiveTurnStatus(turn?.status === "failed" ? "error" : "idle");
         setActiveTurnId(null);
         const errorMessage = turn?.error?.message;
+        updateSegment(segmentId, (segment) => ({
+          ...segment,
+          codexState:
+            turn?.status === "failed"
+              ? "failed"
+              : segment.blockingQuestion
+                ? "waiting_for_user"
+                : "completed",
+          latestMilestone:
+            turn?.status === "failed"
+              ? truncateLine(`Turn failed: ${errorMessage ?? "Unknown error"}`)
+              : segment.latestMilestone,
+          finalOutcome:
+            turn?.status === "failed" && errorMessage
+              ? `Turn failed: ${errorMessage}`
+              : segment.finalOutcome,
+        }));
         if (turn?.status === "failed" && errorMessage) {
           appendCodexMessage({
             id: `assistant-error-${Date.now()}`,
@@ -331,25 +592,29 @@ export function useCodexWebSocket() {
             status: "final",
             timestamp: nowTime(),
             turnId,
+            segmentId: segmentId ?? null,
           });
         }
       }
 
       if (method === "turn/plan/updated") {
-        const turnId = getEventTurnId(params);
+        segmentId = resolveSegmentId(turnId);
+        const summary = summarizePlanUpdate(params);
+        noteSegmentPlan(segmentId, summary);
         appendCodexMessage({
           id: `plan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           role: "assistant",
-          text: summarizePlanUpdate(params),
+          text: summary,
           status: "final",
           timestamp: nowTime(),
           turnId,
+          segmentId: segmentId ?? null,
         });
       }
 
       if (method === "item/started") {
-        const turnId = getEventTurnId(params);
         const item = (params as { item?: Record<string, unknown> })?.item;
+        segmentId = resolveSegmentId(turnId);
         if (item?.type === "agentMessage") {
           const itemId = String(item.id ?? `assistant-${Date.now()}`);
           assistantMessageIdByItemRef.current.set(itemId, itemId);
@@ -360,6 +625,7 @@ export function useCodexWebSocket() {
             status: "streaming",
             timestamp: nowTime(),
             turnId,
+            segmentId: segmentId ?? null,
           });
         }
 
@@ -367,6 +633,7 @@ export function useCodexWebSocket() {
           const itemId = String(item.id ?? `command-${Date.now()}`);
           const progressId = `progress-${itemId}`;
           progressMessageIdByItemRef.current.set(itemId, progressId);
+          noteSegmentCommand(segmentId, item);
           appendCodexMessage({
             id: progressId,
             role: "assistant",
@@ -374,23 +641,32 @@ export function useCodexWebSocket() {
             status: "streaming",
             timestamp: nowTime(),
             turnId,
+            segmentId: segmentId ?? null,
           });
         }
       }
 
       if (method === "item/agentMessage/delta") {
         const p = params as Record<string, unknown>;
-        const turnId = getEventTurnId(params);
         const itemId = String(p.itemId ?? p.item_id ?? p.id ?? "");
         const delta = String(p.delta ?? "");
+        segmentId = resolveSegmentId(turnId);
         if (itemId && delta) {
           const targetId = assistantMessageIdByItemRef.current.get(itemId) ?? itemId;
           assistantMessageIdByItemRef.current.set(itemId, targetId);
+          noteSegmentMessage(segmentId, delta, "streaming");
           setCodexMessages((prev) => {
             const existing = prev.find((message) => message.id === targetId);
             if (existing) {
               return prev.map((message) =>
-                message.id === targetId ? { ...message, text: `${message.text}${delta}`, status: "streaming" } : message,
+                message.id === targetId
+                  ? {
+                      ...message,
+                      text: `${message.text}${delta}`,
+                      status: "streaming",
+                      segmentId: message.segmentId ?? segmentId ?? null,
+                    }
+                  : message,
               );
             }
             return [
@@ -402,6 +678,7 @@ export function useCodexWebSocket() {
                 status: "streaming",
                 timestamp: nowTime(),
                 turnId,
+                segmentId: segmentId ?? null,
               },
             ];
           });
@@ -410,23 +687,23 @@ export function useCodexWebSocket() {
 
       if (method === "item/commandExecution/outputDelta") {
         const p = params as Record<string, unknown>;
-        const turnId = getEventTurnId(params);
         const itemId = String(p.itemId ?? p.item_id ?? p.id ?? "");
         const delta = String(p.delta ?? p.outputDelta ?? "");
-        appendStreamingProgressMessage(itemId, delta, turnId, "Command output");
+        segmentId = resolveSegmentId(turnId);
+        appendStreamingProgressMessage(itemId, delta, turnId, "Command output", segmentId);
       }
 
       if (method === "item/fileChange/outputDelta") {
         const p = params as Record<string, unknown>;
-        const turnId = getEventTurnId(params);
         const itemId = String(p.itemId ?? p.item_id ?? p.id ?? "");
         const delta = String(p.delta ?? p.outputDelta ?? "");
-        appendStreamingProgressMessage(itemId, delta, turnId, "File change");
+        segmentId = resolveSegmentId(turnId);
+        appendStreamingProgressMessage(itemId, delta, turnId, "File change", segmentId);
       }
 
       if (method === "item/completed") {
-        const turnId = getEventTurnId(params);
         const item = (params as { item?: Record<string, unknown> })?.item;
+        segmentId = resolveSegmentId(turnId);
         if (item?.type === "agentMessage") {
           const itemId = String(item.id ?? "");
           const targetId = assistantMessageIdByItemRef.current.get(itemId) ?? itemId;
@@ -435,11 +712,18 @@ export function useCodexWebSocket() {
                 .map((part) => String(part.text ?? ""))
                 .join("")
             : "";
+          noteSegmentMessage(segmentId, text, "final");
           if (targetId) {
             setCodexMessages((prev) =>
               prev.map((message) =>
                 message.id === targetId
-                  ? { ...message, text: text || message.text, status: "final", turnId: message.turnId ?? turnId }
+                  ? {
+                      ...message,
+                      text: text || message.text,
+                      status: "final",
+                      turnId: message.turnId ?? turnId,
+                      segmentId: message.segmentId ?? segmentId ?? null,
+                    }
                   : message,
               ),
             );
@@ -449,6 +733,7 @@ export function useCodexWebSocket() {
         if (item?.type === "commandExecution") {
           const itemId = String(item.id ?? "");
           const progressId = progressMessageIdByItemRef.current.get(itemId);
+          noteSegmentCommand(segmentId, item);
           if (progressId) {
             upsertCodexMessage({
               id: progressId,
@@ -457,13 +742,18 @@ export function useCodexWebSocket() {
               status: "final",
               timestamp: nowTime(),
               turnId,
+              segmentId: segmentId ?? null,
             });
             progressMessageIdByItemRef.current.delete(itemId);
           }
         }
+
+        if (item?.type === "fileChange") {
+          noteSegmentFileChange(segmentId, item);
+        }
       }
 
-      addAgentEvent(method, params);
+      addAgentEvent(method, params, segmentId);
     };
 
     ws.onerror = () => setStatus("error");
@@ -493,15 +783,19 @@ export function useCodexWebSocket() {
     return result.thread;
   }, [send]);
 
-  const startTurn = useCallback(async (threadId: string, text: string): Promise<void> => {
+  const startTurn = useCallback(async (threadId: string, text: string, segmentId?: string): Promise<void> => {
     const trimmed = text.trim();
     if (!trimmed) throw new Error("Task text is empty");
+    const activeSegmentId = segmentId ?? beginSegment("start", trimmed);
+    pendingNextTurnSegmentIdRef.current = activeSegmentId;
+    activeSegmentIdRef.current = activeSegmentId;
     appendCodexMessage({
       id: `user-${Date.now()}`,
       role: "user",
       text: trimmed,
       status: "final",
       timestamp: nowTime(),
+      segmentId: activeSegmentId,
     });
     setActiveTurnStatus("running");
     const resp = await send("turn/start", {
@@ -511,26 +805,31 @@ export function useCodexWebSocket() {
     const turnId = (resp as { result?: { turn?: { id?: string } } }).result?.turn?.id;
     if (turnId) {
       setActiveTurnId(turnId);
+      bindSegmentToTurn(activeSegmentId, turnId);
     }
-  }, [appendCodexMessage, send]);
+  }, [appendCodexMessage, beginSegment, bindSegmentToTurn, send]);
 
-  const steerTurn = useCallback(async (threadId: string, text: string): Promise<void> => {
+  const steerTurn = useCallback(async (threadId: string, text: string, segmentId?: string): Promise<void> => {
     const trimmed = text.trim();
     if (!trimmed) throw new Error("Steering text is empty");
     if (!activeTurnId) throw new Error("No active Codex turn to steer");
+    const activeSegmentId = segmentId ?? beginSegment("steer", trimmed);
+    bindSegmentToTurn(activeSegmentId, activeTurnId);
     appendCodexMessage({
       id: `user-steer-${Date.now()}`,
       role: "user",
       text: trimmed,
       status: "final",
       timestamp: nowTime(),
+      turnId: activeTurnId,
+      segmentId: activeSegmentId,
     });
     await send("turn/steer", {
       threadId,
       input: [{ type: "text", text: trimmed }],
       expectedTurnId: activeTurnId,
     });
-  }, [activeTurnId, appendCodexMessage, send]);
+  }, [activeTurnId, appendCodexMessage, beginSegment, bindSegmentToTurn, send]);
 
   const interruptTurn = useCallback(async (threadId: string): Promise<void> => {
     if (!activeTurnId) throw new Error("No active Codex turn to interrupt");
@@ -566,11 +865,14 @@ export function useCodexWebSocket() {
     loginWithApiKey,
     logout,
     codexMessages,
+    segments,
     activeTurnStatus,
     activeTurnId,
     startTurn,
     steerTurn,
     interruptTurn,
+    beginSegment,
+    setSegmentRelayState,
     addSystemMessage,
     wsRef,
   };

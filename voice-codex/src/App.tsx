@@ -3,7 +3,7 @@ import { Activity, Cable, Mic, MicOff, Play, Radio, Send, SkipForward, Square, T
 import { useCodexWebSocket } from "./useCodexWebSocket";
 import { useOpenAIRealtime } from "./useOpenAIRealtime";
 import type { OpenAIRealtimeStatus } from "./useOpenAIRealtime";
-import type { LogEntry, AgentEvent, ModelInfo, CodexMessage } from "./types";
+import type { LogEntry, AgentEvent, ModelInfo, CodexMessage, CodexSegment, CodexSegmentState } from "./types";
 import { CODEX_PROJECT_CWD } from "./codexConfig";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -98,163 +98,113 @@ function summarizeRecentCommands(agentEvents: AgentEvent[]) {
   return `Read ${paths.slice(0, -1).join(", ")}, and ${paths.at(-1)}.`;
 }
 
-function getMessagesSinceLatestHandoff(codexMessages: CodexMessage[]) {
-  const boundaryTimestamp = getLatestHandoffBoundary(codexMessages);
-  return boundaryTimestamp
-    ? codexMessages.filter((message) => message.timestamp >= boundaryTimestamp)
-    : codexMessages;
-}
-
-function getEventsSinceLatestHandoff(agentEvents: AgentEvent[], codexMessages: CodexMessage[]) {
-  const boundaryTimestamp = getLatestHandoffBoundary(codexMessages);
-  return boundaryTimestamp
-    ? agentEvents.filter((event) => event.timestamp >= boundaryTimestamp)
-    : agentEvents;
-}
-
-function isCodexProgressMessage(text: string) {
-  const trimmed = text.trim();
-  if (!trimmed) return true;
-  return (
-    trimmed.startsWith("Plan update") ||
-    trimmed.startsWith("Completed:") ||
-    trimmed.startsWith("Running:") ||
-    trimmed.startsWith("Failed (") ||
-    trimmed.startsWith("Turn failed:")
-  );
-}
-
-function messageRequestsUserInput(text: string) {
-  const trimmed = text.trim();
-  if (!trimmed || isCodexProgressMessage(trimmed)) return false;
-  if (trimmed.includes("?")) return true;
-
-  const lowered = trimmed.toLowerCase();
-  return [
-    "could you clarify",
-    "can you clarify",
-    "please clarify",
-    "need clarity",
-    "need more direction",
-    "need more detail",
-    "which ",
-    "what kind",
-    "what would you like",
-    "what do you want",
-    "let me know if",
-    "if you want me to",
-  ].some((phrase) => lowered.includes(phrase));
-}
-
-function getLatestSubstantiveAssistantMessage(codexMessages: CodexMessage[]) {
-  return [...codexMessages]
+function getCurrentSegment(segments: CodexSegment[]) {
+  const running = [...segments]
     .reverse()
-    .find(
-      (message) =>
-        message.role === "assistant" &&
-        message.status === "final" &&
-        message.text.trim() &&
-        !isCodexProgressMessage(message.text),
-    );
+    .find((segment) => segment.codexState === "running" || segment.codexState === "waiting_for_user");
+  if (running) return running;
+  return segments.at(-1) ?? null;
 }
 
-function getLatestHandoffBoundary(codexMessages: CodexMessage[]) {
-  return [...codexMessages]
-    .reverse()
-    .find(
-      (message) =>
-        message.role === "system" &&
-        (message.eventKind === "start" || message.eventKind === "interrupt"),
-    )?.timestamp ?? null;
+function getSegmentMessages(codexMessages: CodexMessage[], segmentId?: string | null) {
+  if (!segmentId) return [];
+  return codexMessages.filter((message) => message.segmentId === segmentId);
 }
 
-function summarizeCurrentCodexActivity(
-  activeTurnStatus: "idle" | "running" | "error",
-  agentEvents: AgentEvent[],
-  codexMessages: CodexMessage[],
-) {
-  const scopedEvents = getEventsSinceLatestHandoff(agentEvents, codexMessages);
-  const scopedMessages = getMessagesSinceLatestHandoff(codexMessages);
+function getSegmentEvents(agentEvents: AgentEvent[], segmentId?: string | null) {
+  if (!segmentId) return [];
+  return agentEvents.filter((event) => event.segmentId === segmentId);
+}
 
-  const recentEvents = [...scopedEvents].reverse();
-  const latestPlan = recentEvents.find((event) => event.method === "turn/plan/updated");
-  const recentCommandSummary = summarizeRecentCommands(scopedEvents);
-  const latestSubstantiveAssistant = getLatestSubstantiveAssistantMessage(scopedMessages);
+function summarizeSegmentStatus(segment: CodexSegment | null, agentEvents: AgentEvent[] = []) {
+  if (!segment) return "Codex is idle right now.";
 
-  if (activeTurnStatus !== "running") {
-    if (latestSubstantiveAssistant && messageRequestsUserInput(latestSubstantiveAssistant.text)) {
-      const firstLine =
-        latestSubstantiveAssistant.text.trim().split("\n").find(Boolean) ?? latestSubstantiveAssistant.text.trim();
-      if (recentCommandSummary) {
-        return `Codex is waiting for input. ${recentCommandSummary} It asked: ${firstLine}`.slice(0, 420);
-      }
-      return `Codex is waiting for input. It asked: ${firstLine}`.slice(0, 360);
+  const readSummary =
+    segment.filesRead.length === 0
+      ? null
+      : segment.filesRead.length === 1
+        ? `Read ${segment.filesRead[0]}.`
+        : segment.filesRead.length === 2
+          ? `Read ${segment.filesRead[0]} and ${segment.filesRead[1]}.`
+          : `Read ${segment.filesRead.slice(0, -1).join(", ")}, and ${segment.filesRead.at(-1)}.`;
+  const editSummary =
+    segment.filesEdited.length === 0
+      ? null
+      : segment.filesEdited.length === 1
+        ? `Edited ${segment.filesEdited[0]}.`
+        : `Edited ${segment.filesEdited.slice(0, 2).join(" and ")}.`;
+  const latestEventSummary = summarizeRecentCommands(getSegmentEvents(agentEvents, segment.id));
+  const milestone = segment.latestMilestone ? `${segment.latestMilestone}` : null;
+
+  if (segment.codexState === "waiting_for_user") {
+    return [
+      "Codex is waiting for input.",
+      readSummary,
+      editSummary,
+      segment.blockingQuestion ? `It asked: ${segment.blockingQuestion.split("\n").find(Boolean) ?? segment.blockingQuestion}` : null,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .slice(0, 420);
+  }
+
+  if (segment.codexState === "running") {
+    return ["Codex is working.", milestone, editSummary, readSummary, latestEventSummary].filter(Boolean).join(" ").slice(0, 420);
+  }
+
+  if (segment.codexState === "failed") {
+    return ["Codex failed.", milestone, segment.finalOutcome, editSummary, readSummary].filter(Boolean).join(" ").slice(0, 420);
+  }
+
+  if (segment.codexState === "completed") {
+    return ["Codex completed the current segment.", segment.finalOutcome, editSummary, readSummary].filter(Boolean).join(" ").slice(0, 420);
+  }
+
+  return ["Codex is idle.", segment.finalOutcome, editSummary, readSummary].filter(Boolean).join(" ").slice(0, 360);
+}
+
+function getSegmentWorkingLabel(segment: CodexSegment | null) {
+  if (!segment) return null;
+  if (segment.codexState === "waiting_for_user") return "waiting for input...";
+  if (segment.codexState !== "running") return null;
+
+  const latestCommand = segment.commandsRun.at(-1);
+  if (latestCommand) {
+    if (latestCommand.includes("sed -n") || latestCommand.includes("cat ") || latestCommand.includes("rg ")) {
+      return "reading files...";
     }
-
-    if (recentCommandSummary && latestSubstantiveAssistant) {
-      const firstLine =
-        latestSubstantiveAssistant.text.trim().split("\n").find(Boolean) ?? latestSubstantiveAssistant.text.trim();
-      return `Codex is idle. ${recentCommandSummary} Latest result: ${firstLine}`.slice(0, 420);
+    if (latestCommand.includes("npm ") || latestCommand.includes("pnpm ") || latestCommand.includes("yarn ")) {
+      return "running checks...";
     }
-
-    if (latestSubstantiveAssistant) {
-      const firstLine =
-        latestSubstantiveAssistant.text.trim().split("\n").find(Boolean) ?? latestSubstantiveAssistant.text.trim();
-      return `Codex is idle. Latest result: ${firstLine}`.slice(0, 320);
-    }
-
-    if (recentCommandSummary) {
-      return `Codex is idle. ${recentCommandSummary}`.slice(0, 320);
-    }
-
-    return "Codex is idle right now.";
+    return "running command...";
   }
 
-  if (latestSubstantiveAssistant && messageRequestsUserInput(latestSubstantiveAssistant.text)) {
-    const firstLine =
-      latestSubstantiveAssistant.text.trim().split("\n").find(Boolean) ?? latestSubstantiveAssistant.text.trim();
-    if (recentCommandSummary) {
-      return `Codex is blocked on user input. ${recentCommandSummary} It asked: ${firstLine}`.slice(0, 420);
-    }
-    return `Codex is blocked on user input. It asked: ${firstLine}`.slice(0, 360);
+  if (segment.filesEdited.length > 0) {
+    return `editing ${segment.filesEdited.at(-1)}...`;
   }
 
-  const latestCommand = recentEvents.find(
-    (event) =>
-      event.method === "item/started" &&
-      typeof (event.raw as { item?: { type?: string } })?.item?.type === "string" &&
-      (event.raw as { item?: { type?: string } }).item?.type === "commandExecution",
-  );
-  const latestAssistant = [...scopedMessages]
-    .reverse()
-    .find((message) => message.role === "assistant" && message.text.trim());
-
-  if (latestPlan?.summary && recentCommandSummary) {
-    return `Codex is working. ${recentCommandSummary} ${latestPlan.summary}`.slice(0, 420);
+  if (segment.latestMilestone) {
+    return `${segment.latestMilestone.replace(/\.$/, "")}...`.slice(0, 120);
   }
 
-  if (latestPlan?.summary) {
-    return `Codex is working. ${latestPlan.summary}`.slice(0, 320);
-  }
+  return "working...";
+}
 
-  if (recentCommandSummary && latestCommand?.summary) {
-    return `Codex is working. ${recentCommandSummary} ${latestCommand.summary}`.slice(0, 360);
-  }
-
-  if (recentCommandSummary) {
-    return `Codex is working. ${recentCommandSummary}`.slice(0, 320);
-  }
-
-  if (latestCommand?.summary) {
-    return `Codex is working. ${latestCommand.summary}`.slice(0, 320);
-  }
-
-  if (latestAssistant?.text) {
-    const firstLine = latestAssistant.text.trim().split("\n").find(Boolean) ?? latestAssistant.text.trim();
-    return `Codex is working. ${firstLine}`.slice(0, 320);
-  }
-
-  return "Codex is working right now.";
+function buildSegmentSnapshot(segment: CodexSegment | null) {
+  if (!segment) return null;
+  return {
+    segmentId: segment.id,
+    mode: segment.mode,
+    codexState: segment.codexState,
+    relayState: segment.relayState,
+    sourceUtterance: segment.sourceUtterance,
+    latestMilestone: segment.latestMilestone,
+    blockingQuestion: segment.blockingQuestion,
+    finalOutcome: segment.finalOutcome,
+    filesRead: segment.filesRead,
+    filesEdited: segment.filesEdited,
+    commandsRun: segment.commandsRun.slice(-5),
+  };
 }
 
 function formatDuration(totalSeconds: number) {
@@ -322,12 +272,18 @@ function panelBadgeClass() {
   return "h-8 rounded-full border-[#b9f075]/20 bg-[#b9f075]/10 px-3 text-[13px] font-medium text-[#d8f5ab]";
 }
 
-function turnBadgeClass(status: "idle" | "running" | "error") {
+function turnBadgeClass(status: CodexSegmentState) {
   if (status === "running") {
     return "h-10 rounded-full border-[#b9f075]/25 bg-[#b9f075]/14 px-4 text-[14px] font-semibold text-[#ecffd0]";
   }
-  if (status === "error") {
+  if (status === "waiting_for_user") {
+    return "h-10 rounded-full border-orange-400/25 bg-orange-400/14 px-4 text-[14px] font-semibold text-orange-100";
+  }
+  if (status === "failed") {
     return "h-10 rounded-full border-red-500/30 bg-red-500/14 px-4 text-[14px] font-semibold text-red-100";
+  }
+  if (status === "completed") {
+    return "h-10 rounded-full border-white/14 bg-white/[0.07] px-4 text-[14px] font-semibold text-zinc-100";
   }
   return "h-10 rounded-full border-white/12 bg-white/[0.05] px-4 text-[14px] font-semibold text-zinc-100";
 }
@@ -581,7 +537,15 @@ function EventPanel({ events }: { events: AgentEvent[] }) {
   );
 }
 
-function CodexConversationPanel({ messages }: { messages: CodexMessage[] }) {
+function CodexConversationPanel({
+  messages,
+  activeSegment,
+}: {
+  messages: CodexMessage[];
+  activeSegment: CodexSegment | null;
+}) {
+  const workingLabel = getSegmentWorkingLabel(activeSegment);
+
   return (
     <div className="flex h-full min-h-0 flex-col rounded-xl border border-white/8 bg-[#171d1b] p-3">
       <ScrollArea className="min-h-0 flex-1 pr-3">
@@ -631,6 +595,21 @@ function CodexConversationPanel({ messages }: { messages: CodexMessage[] }) {
               </div>
             ))
           )}
+          {workingLabel ? (
+            <div className="py-2">
+              <div className="space-y-1 mr-12">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                  <span className="text-[#d8f5ab]">segment {activeSegment?.mode}</span>
+                  <span>{workingLabel}</span>
+                  {activeSegment ? <TimestampLabel timestamp={activeSegment.updatedAt} /> : null}
+                </div>
+                <div className="inline-flex max-w-[92%] items-center gap-2 rounded-2xl border border-[#b9f075]/15 bg-[#b9f075]/8 px-3.5 py-2 text-sm leading-6 text-[#e6f7c9] shadow-[0_0_0_1px_rgba(185,240,117,0.04)]">
+                  <span className="size-2 rounded-full bg-[#b9f075] shadow-[0_0_10px_rgba(185,240,117,0.45)]" />
+                  <span>{workingLabel}</span>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </ScrollArea>
     </div>
@@ -730,12 +709,14 @@ export default function App() {
     startThread,
     readAccount,
     codexMessages,
+    segments,
     activeTurnStatus,
     activeTurnId,
     startTurn,
     steerTurn,
     interruptTurn,
-    addSystemMessage,
+    beginSegment,
+    setSegmentRelayState,
   } = useCodexWebSocket();
 
   const {
@@ -762,20 +743,20 @@ export default function App() {
   const prevEventCount = useRef(0);
   const lastHandledRealtimeMessageIdRef = useRef<string | null>(null);
   const routeCacheRef = useRef(new Map<string, RoutedIntent>());
-  const queuedInterruptReplacementRef = useRef<string | null>(null);
-  const pendingCodexNarrationRef = useRef<{ request: string; turnId?: string | null } | null>(null);
-  const lastNarratedCodexMessageIdRef = useRef<string | null>(null);
-  const lastRelayedBlockingCodexMessageIdRef = useRef<string | null>(null);
+  const queuedInterruptReplacementRef = useRef<{ request: string; segmentId: string } | null>(null);
+  const pendingCodexNarrationRef = useRef<{ request: string; segmentId: string } | null>(null);
   const codexBootstrapAttemptedRef = useRef(false);
   const realtimeBootstrapAttemptedRef = useRef(false);
   const [threadError, setThreadError] = useState<string | null>(null);
+  const currentSegment = getCurrentSegment(segments);
+  const currentCodexState: CodexSegmentState = currentSegment?.codexState ?? "idle";
+  const currentCodexStatus = summarizeSegmentStatus(currentSegment, agentEvents);
 
   const routeIntent = async (message: string, codexRunning: boolean): Promise<RoutedIntent> => {
     const latestCodexReply = [...codexMessages]
       .reverse()
       .find((entry) => entry.role === "assistant" && entry.status === "final");
-    const currentCodexStatus = summarizeCurrentCodexActivity(activeTurnStatus, agentEvents, codexMessages);
-    const latestSegmentMessages = getMessagesSinceLatestHandoff(codexMessages)
+    const latestSegmentMessages = getSegmentMessages(codexMessages, currentSegment?.id)
       .slice(-6)
       .map((entry) => ({
         role: entry.role,
@@ -786,6 +767,10 @@ export default function App() {
     const recentConversation = realtimeMessages
       .slice(-6)
       .map((entry) => ({ role: entry.role, text: entry.text }));
+    const currentSegmentSnapshot = buildSegmentSnapshot(currentSegment);
+    const latestCompletedSegmentSnapshot = buildSegmentSnapshot(
+      [...segments].reverse().find((segment) => segment.codexState === "completed" || segment.codexState === "failed") ?? null,
+    );
 
     const response = await fetch("/__intent/route", {
       method: "POST",
@@ -798,6 +783,8 @@ export default function App() {
         latestCodexReply: latestCodexReply?.text ?? null,
         currentCodexStatus,
         latestSegmentMessages,
+        currentSegment: currentSegmentSnapshot,
+        latestCompletedSegment: latestCompletedSegmentSnapshot,
         recentConversation,
       }),
     });
@@ -934,27 +921,29 @@ export default function App() {
     const dispatch = async () => {
       let routed = routeCacheRef.current.get(latestFinalUserMessage.id);
       if (!routed) {
-        routed = await routeIntent(latestFinalUserMessage.text, activeTurnStatus === "running");
+        routed = await routeIntent(latestFinalUserMessage.text, currentCodexState === "running" || currentCodexState === "waiting_for_user");
         routeCacheRef.current.set(latestFinalUserMessage.id, routed);
       }
 
       if (routed.action === "chat_only") {
         if (routed.chat_mode === "relay_codex_status") {
-          const codexStatus = summarizeCurrentCodexActivity(activeTurnStatus, agentEvents, codexMessages);
+          if (currentSegment && currentSegment.codexState === "running") {
+            setSegmentRelayState(currentSegment.id, "progress_spoken");
+          }
           sendRealtimeText(
-            `Summarize current Codex activity for the user in one or two short sentences. Include what Codex is doing now and, if available, the main files or steps it has already touched. Do not repeat the user's wording. Do not invent details.\n\nCurrent Codex status:\n${codexStatus}`,
+            `Summarize current Codex segment for the user in one or two short sentences. Explain what Codex is doing now or what just happened, based only on the structured segment state below. Mention the most relevant files or steps if present. Do not repeat the user's wording. Do not invent details.\n\nCurrent Codex status:\n${currentCodexStatus}\n\nCurrent segment:\n${JSON.stringify(buildSegmentSnapshot(currentSegment), null, 2)}`,
             { requestResponse: true, visible: false },
           );
           return;
         }
 
         if (routed.chat_mode === "relay_latest_codex") {
-          const latestCodexReply = [...codexMessages]
+          const completedSegment = [...segments]
             .reverse()
-            .find((message) => message.role === "assistant" && message.status === "final");
-          if (latestCodexReply) {
+            .find((segment) => segment.finalOutcome || segment.blockingQuestion);
+          if (completedSegment) {
             sendRealtimeText(
-              `Codex result available. Relay exact substance to user. No invention. Be terse.\n\nUser asked: ${latestFinalUserMessage.text}\n\nCodex result:\n${latestCodexReply.text}`,
+              `Codex segment result available. Relay the exact substance to the user with no invention. Be terse.\n\nUser asked: ${latestFinalUserMessage.text}\n\nSegment:\n${JSON.stringify(buildSegmentSnapshot(completedSegment), null, 2)}`,
               { requestResponse: true, visible: false },
             );
             return;
@@ -975,27 +964,26 @@ export default function App() {
       }
 
       if (routed.action === "codex_interrupt" && activeTurnStatus === "running") {
-        queuedInterruptReplacementRef.current = latestFinalUserMessage.text;
-        pendingCodexNarrationRef.current = null;
+        const segmentId = beginSegment("interrupt", latestFinalUserMessage.text);
+        queuedInterruptReplacementRef.current = { request: latestFinalUserMessage.text, segmentId };
+        pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, segmentId };
         await interruptTurn(activeThread.id);
-        addSystemMessage("interrupt", "interrupt");
         addRealtimeSystemMessage("interrupt", "interrupt");
         return;
       }
 
       if (routed.action === "codex_steer" && activeTurnStatus === "running" && activeTurnId) {
-        pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, turnId: activeTurnId };
-        await steerTurn(activeThread.id, latestFinalUserMessage.text);
-        addSystemMessage("steer", "steer");
+        const segmentId = beginSegment("steer", latestFinalUserMessage.text);
+        pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, segmentId };
+        await steerTurn(activeThread.id, latestFinalUserMessage.text, segmentId);
         addRealtimeSystemMessage("steer", "steer");
         return;
       }
 
       if (activeTurnStatus === "idle") {
-        pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, turnId: null };
-        await startTurn(activeThread.id, latestFinalUserMessage.text);
-        lastRelayedBlockingCodexMessageIdRef.current = null;
-        addSystemMessage("new turn", "start");
+        const segmentId = beginSegment("start", latestFinalUserMessage.text);
+        pendingCodexNarrationRef.current = { request: latestFinalUserMessage.text, segmentId };
+        await startTurn(activeThread.id, latestFinalUserMessage.text, segmentId);
         addRealtimeSystemMessage("new turn", "start");
       }
     };
@@ -1006,15 +994,20 @@ export default function App() {
   }, [
     activeTurnId,
     activeTurnStatus,
-    addSystemMessage,
     addRealtimeSystemMessage,
     agentEvents,
     codexMessages,
+    beginSegment,
+    currentCodexState,
+    currentCodexStatus,
+    currentSegment,
     interruptTurn,
     realtimeMessages,
     requestRealtimeResponse,
     selectedModel,
     sendRealtimeText,
+    segments,
+    setSegmentRelayState,
     startThread,
     startTurn,
     status,
@@ -1023,92 +1016,61 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    const latestBlockingMessage = [...getMessagesSinceLatestHandoff(codexMessages)]
-      .reverse()
-      .find(
-        (message) =>
-          message.role === "assistant" &&
-          message.status === "final" &&
-          message.text.trim() &&
-          messageRequestsUserInput(message.text),
-      );
+    if (!currentSegment) return;
+    if (currentSegment.codexState !== "waiting_for_user") return;
+    if (!currentSegment.blockingQuestion) return;
+    if (currentSegment.relayState === "clarification_spoken" || currentSegment.relayState === "completion_spoken") return;
 
-    if (!latestBlockingMessage) return;
-    if (lastRelayedBlockingCodexMessageIdRef.current === latestBlockingMessage.id) return;
-
-    lastRelayedBlockingCodexMessageIdRef.current = latestBlockingMessage.id;
-
-    if (
-      pendingCodexNarrationRef.current &&
-      (!pendingCodexNarrationRef.current.turnId || pendingCodexNarrationRef.current.turnId === latestBlockingMessage.turnId)
-    ) {
+    if (pendingCodexNarrationRef.current?.segmentId === currentSegment.id) {
       pendingCodexNarrationRef.current = null;
     }
 
     try {
       sendRealtimeText(
-        `Codex needs user input. Relay this briefly and clearly as a short spoken question. Do not add anything. Do not summarize unrelated work.\n\nCodex message:\n${latestBlockingMessage.text}`,
+        `Codex needs user input. Relay this briefly and clearly as a short spoken question. Do not add anything. Do not summarize unrelated work.\n\nCodex segment:\n${JSON.stringify(buildSegmentSnapshot(currentSegment), null, 2)}`,
         { requestResponse: true, visible: false },
       );
+      setSegmentRelayState(currentSegment.id, "clarification_spoken");
     } catch (error) {
       console.error(error);
     }
-  }, [codexMessages, sendRealtimeText]);
-
-  useEffect(() => {
-    if (!pendingCodexNarrationRef.current) return;
-    if (pendingCodexNarrationRef.current.turnId) return;
-    if (!activeTurnId) return;
-
-    pendingCodexNarrationRef.current = {
-      ...pendingCodexNarrationRef.current,
-      turnId: activeTurnId,
-    };
-  }, [activeTurnId]);
+  }, [currentSegment, sendRealtimeText, setSegmentRelayState]);
 
   useEffect(() => {
     if (activeTurnStatus !== "idle" || !thread || !queuedInterruptReplacementRef.current) return;
 
     const replacement = queuedInterruptReplacementRef.current;
     queuedInterruptReplacementRef.current = null;
-    pendingCodexNarrationRef.current = { request: replacement, turnId: null };
+    pendingCodexNarrationRef.current = replacement;
 
-    void startTurn(thread.id, replacement).catch((error) => {
+    void startTurn(thread.id, replacement.request, replacement.segmentId).catch((error) => {
       setThreadError((error as Error).message);
     });
   }, [activeTurnStatus, startTurn, thread]);
 
   useEffect(() => {
-    if (activeTurnStatus !== "idle") return;
-    if (queuedInterruptReplacementRef.current) return;
     if (!pendingCodexNarrationRef.current) return;
+    if (queuedInterruptReplacementRef.current) return;
 
     const pending = pendingCodexNarrationRef.current;
-    const scopedReply = [...codexMessages]
-      .reverse()
-      .find(
-        (message) =>
-          message.role === "assistant" &&
-          message.status === "final" &&
-          (!pending.turnId || message.turnId === pending.turnId),
-      );
-
-    const codexSummary = summarizeCurrentCodexActivity("idle", agentEvents, codexMessages);
-    const relayKey = scopedReply?.id ?? `summary-${pending.turnId ?? pending.request}`;
-    if (lastNarratedCodexMessageIdRef.current === relayKey) return;
+    const targetSegment = segments.find((segment) => segment.id === pending.segmentId);
+    if (!targetSegment) return;
+    if (targetSegment.codexState === "running") return;
+    if (targetSegment.codexState === "waiting_for_user") return;
+    if (targetSegment.relayState === "completion_spoken") return;
 
     pendingCodexNarrationRef.current = null;
-    lastNarratedCodexMessageIdRef.current = relayKey;
 
     try {
       sendRealtimeText(
-        `Codex finished. Give the user a very short spoken summary of what changed or what Codex accomplished since the latest handoff. Do not read raw command output. Do not repeat the user's wording. Keep it to one or two short sentences. End with one very short follow-up question, for example "Want tweaks?" No invention.\n\nOriginal user request:\n${pending.request}\n\nCodex segment summary:\n${codexSummary}`,
+        `Codex finished a segment. Give the user a very short spoken summary of what changed or what Codex accomplished. Use only the structured segment summary below. Do not read raw command output. Do not repeat the user's wording. Keep it to one or two short sentences. End with one very short follow-up question, for example "Want tweaks?" No invention.\n\nOriginal user request:\n${pending.request}\n\nCodex segment summary:\n${JSON.stringify(buildSegmentSnapshot(targetSegment), null, 2)}\n\nCondensed status:\n${summarizeSegmentStatus(targetSegment, agentEvents)}`,
         { requestResponse: true, visible: false },
       );
+      setSegmentRelayState(targetSegment.id, "completion_spoken");
     } catch (error) {
       console.error(error);
     }
-  }, [activeTurnStatus, agentEvents, codexMessages, sendRealtimeText]);
+  }, [agentEvents, segments, sendRealtimeText, setSegmentRelayState]);
 
   const handleSendCodexTask = async () => {
     const task = codexTaskText.trim();
@@ -1286,9 +1248,21 @@ export default function App() {
               description="Local Codex agent."
               icon={<Cable className="size-4" />}
               headerRight={
-                <Badge className={`gap-2 ${turnBadgeClass(activeTurnStatus)}`}>
-                  <span className={`size-2 rounded-full ${statusDotClass(activeTurnStatus === "running" ? "active" : activeTurnStatus)}`} />
-                  Turn {activeTurnStatus}
+                <Badge className={`gap-2 ${turnBadgeClass(currentCodexState)}`}>
+                  <span
+                    className={`size-2 rounded-full ${
+                      statusDotClass(
+                        currentCodexState === "running"
+                          ? "active"
+                          : currentCodexState === "failed"
+                            ? "error"
+                            : currentCodexState === "waiting_for_user"
+                              ? "connecting"
+                              : "idle",
+                      )
+                    }`}
+                  />
+                  Codex {currentCodexState.replaceAll("_", " ")}
                 </Badge>
               }
               contentClassName="flex min-h-[36rem] flex-col space-y-4"
@@ -1347,7 +1321,7 @@ export default function App() {
                       </div>
 
                       <div className="min-h-0 flex-1">
-                        <CodexConversationPanel messages={codexMessages} />
+                        <CodexConversationPanel messages={codexMessages} activeSegment={currentSegment} />
                       </div>
                     </div>
                   ) : (

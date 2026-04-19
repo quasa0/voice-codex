@@ -107,6 +107,8 @@ async function routeIntentWithServerModel(payload: {
   latestCodexReply?: string | null
   currentCodexStatus?: string | null
   latestSegmentMessages?: Array<{ role: string; text: string; status?: string; eventKind?: string | null }>
+  currentSegment?: Record<string, unknown> | null
+  latestCompletedSegment?: Record<string, unknown> | null
   recentConversation?: Array<{ role: string; text: string }>
 }) {
   if (!process.env.OPENAI_API_KEY) {
@@ -141,7 +143,7 @@ async function routeIntentWithServerModel(payload: {
               'If there is any meaningful uncertainty about whether the answer depends on local project context, choose Codex rather than chat_only.',
               'Do not let realtime answer from generic software knowledge when the user appears to mean this specific project.',
               'If the intent is ambiguous between generic knowledge and this project, prefer Codex or ask for clarification rather than allowing a guessed project answer.',
-              'Treat currentCodexStatus and latestSegmentMessages as the source of truth for the active Codex segment. Do not over-focus on latestCodexReply when the user is asking about current behavior, timeline, or why something happened.',
+              'Treat currentSegment, latestCompletedSegment, currentCodexStatus, and latestSegmentMessages as the source of truth for Codex segment state and timeline. Do not over-focus on latestCodexReply when the user is asking about current behavior, timeline, or why something happened.',
               'Examples that MUST route to Codex: "tell me about our todo app", "what files do we have", "how is this implemented", "what did Codex build", "explain this project".',
               'Examples that should use relay_codex_status: "what is it doing right now", "what is Codex doing rn", "summarize current Codex activity".',
               'Examples that can stay chat_only: "stop", "thanks", "what is React", "explain CRUD generally".',
@@ -349,6 +351,8 @@ function codexProxyPlugin(): Plugin {
             latestCodexReply?: string | null
             currentCodexStatus?: string | null
             latestSegmentMessages?: Array<{ role: string; text: string; status?: string; eventKind?: string | null }>
+            currentSegment?: Record<string, unknown> | null
+            latestCompletedSegment?: Record<string, unknown> | null
             recentConversation?: Array<{ role: string; text: string }>
           }
           if (!body.message?.trim()) {
@@ -363,6 +367,8 @@ function codexProxyPlugin(): Plugin {
             latestCodexReply: body.latestCodexReply ?? null,
             currentCodexStatus: body.currentCodexStatus ?? null,
             latestSegmentMessages: body.latestSegmentMessages ?? [],
+            currentSegment: body.currentSegment ?? null,
+            latestCompletedSegment: body.latestCompletedSegment ?? null,
             recentConversation: body.recentConversation ?? [],
           })
           res.statusCode = 200

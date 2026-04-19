@@ -53,9 +53,13 @@ export interface AgentEvent {
   summary: string;
   raw: unknown;
   timestamp: string;
+  segmentId?: string | null;
 }
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
+export type CodexSegmentMode = "start" | "steer" | "interrupt";
+export type CodexSegmentState = "idle" | "running" | "waiting_for_user" | "completed" | "failed";
+export type CodexRelayState = "not_spoken" | "progress_spoken" | "clarification_spoken" | "completion_spoken";
 
 export interface CodexMessage {
   id: string;
@@ -65,4 +69,22 @@ export interface CodexMessage {
   timestamp: string;
   eventKind?: "start" | "steer" | "interrupt";
   turnId?: string | null;
+  segmentId?: string | null;
+}
+
+export interface CodexSegment {
+  id: string;
+  sourceUtterance: string;
+  mode: CodexSegmentMode;
+  codexState: CodexSegmentState;
+  relayState: CodexRelayState;
+  createdAt: string;
+  updatedAt: string;
+  turnId?: string | null;
+  latestMilestone: string | null;
+  blockingQuestion: string | null;
+  finalOutcome: string | null;
+  filesRead: string[];
+  filesEdited: string[];
+  commandsRun: string[];
 }
