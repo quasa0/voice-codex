@@ -176,6 +176,11 @@ export function useCodexWebSocket() {
   const turnSegmentIdRef = useRef<Map<string, string>>(new Map());
   const pendingNextTurnSegmentIdRef = useRef<string | null>(null);
   const activeSegmentIdRef = useRef<string | null>(null);
+  const codexMessagesRef = useRef<CodexMessage[]>([]);
+
+  useEffect(() => {
+    codexMessagesRef.current = codexMessages;
+  }, [codexMessages]);
 
   const updateSegment = useCallback((segmentId: string | null | undefined, updater: (segment: CodexSegment) => CodexSegment) => {
     if (!segmentId) return;
@@ -715,7 +720,7 @@ export function useCodexWebSocket() {
                 .map((part) => String(part.text ?? ""))
                 .join("")
             : "";
-          const existingMessage = codexMessages.find((message) => message.id === targetId);
+          const existingMessage = codexMessagesRef.current.find((message) => message.id === targetId);
           const resolvedText = textFromContent || existingMessage?.text || "";
           noteSegmentMessage(segmentId, resolvedText, "final");
           if (targetId) {
