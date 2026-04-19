@@ -98,10 +98,6 @@ function summarizeRecentCommands(agentEvents: AgentEvent[]) {
 }
 
 function getCurrentSegment(segments: CodexSegment[]) {
-  const running = [...segments]
-    .reverse()
-    .find((segment) => segment.codexState === "running" || segment.codexState === "waiting_for_user");
-  if (running) return running;
   return segments.at(-1) ?? null;
 }
 
