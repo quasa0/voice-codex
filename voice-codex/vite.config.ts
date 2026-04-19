@@ -124,7 +124,19 @@ async function routeIntentWithServerModel(payload: {
         {
           role: 'system',
           content:
-            'You route user intent between realtime chat and Codex worker. Return JSON only. Prefer chat_only for casual talk. Prefer codex_start for clear requests to inspect code/files/project or perform work when Codex idle. Prefer codex_steer for clear modifications to in-flight work. Prefer codex_interrupt only when user clearly redirects, cancels, replaces, or says actually/instead/stop. If user asks to hear or summarize latest Codex result, use action=chat_only and chat_mode=relay_latest_codex. Never invent project facts.',
+            [
+              'You route user intent between realtime chat and Codex worker. Return JSON only.',
+              'Use Codex whenever the user asks about the local project, repo, files, code, implementation, architecture, components, or behavior of "our app", "this app", "the todo app", or similar project-specific wording.',
+              'If answering would require inspecting workspace contents or remembering what Codex built earlier, route to Codex rather than letting realtime answer from general knowledge.',
+              'Prefer codex_start for project inspection/work when Codex is idle.',
+              'Prefer codex_steer for follow-up project questions or modifications when Codex is already running.',
+              'Prefer codex_interrupt only when the user clearly redirects or replaces in-flight Codex work.',
+              'Prefer chat_only only for casual conversation, generic knowledge, or pure voice-control requests like "stop", "stop yapping", "be quiet", or similar.',
+              'If the user asks to hear, repeat, summarize, or relay the latest Codex result, use action=chat_only and chat_mode=relay_latest_codex.',
+              'Never invent project facts. If the question is about the local project, Codex should inspect it.',
+              'Examples that MUST route to Codex: "tell me about our todo app", "what files do we have", "how is this implemented", "what did Codex build", "explain this project".',
+              'Examples that can stay chat_only: "stop", "thanks", "what is React", "explain CRUD generally".',
+            ].join(' '),
         },
         {
           role: 'user',
