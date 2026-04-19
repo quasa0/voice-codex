@@ -377,6 +377,11 @@ function formatStatusLabel(value: string) {
     .join("-");
 }
 
+function isPaneOnlyQuery(search: string) {
+  const params = new URLSearchParams(search);
+  return params.get("embed") === "panes" || params.get("panesOnly") === "1";
+}
+
 function TimestampLabel({ timestamp, className = "" }: { timestamp: string; className?: string }) {
   return (
     <span
@@ -904,6 +909,9 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [codexTaskText, setCodexTaskText] = useState("");
+  const [locationSearch, setLocationSearch] = useState(() =>
+    typeof window === "undefined" ? "" : window.location.search,
+  );
 
   const {
     status,
@@ -958,6 +966,20 @@ export default function App() {
   const currentSegment = getCurrentSegment(segments);
   const currentCodexState: CodexSegmentState = currentSegment?.codexState ?? "idle";
   const currentCodexStatus = summarizeSegmentStatus(currentSegment, agentEvents);
+  const paneOnlyMode = isPaneOnlyQuery(locationSearch);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const syncLocationSearch = () => {
+      setLocationSearch(window.location.search);
+    };
+
+    window.addEventListener("popstate", syncLocationSearch);
+    return () => {
+      window.removeEventListener("popstate", syncLocationSearch);
+    };
+  }, []);
 
   const routeIntent = async (message: string, codexRunning: boolean): Promise<RoutedIntent> => {
     const latestCodexReply = [...codexMessages]
@@ -1358,25 +1380,27 @@ export default function App() {
           animation: codex-working-sheen 2.9s ease-in-out infinite;
         }
       `}</style>
-      <div className="mx-auto flex max-w-[1180px] flex-col gap-4 px-3 py-4 sm:px-5 lg:px-6">
-        <Card className="overflow-hidden border-white/8 bg-[#1b221f]/96 shadow-xl shadow-black/20">
-          <CardContent className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="max-w-3xl space-y-3">
-              <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-zinc-300">
-                Shack15 Hackathon Build
-              </Badge>
-              <div className="space-y-1.5">
-                <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl lg:text-[2.1rem]">
-                  Voice Codex
-                </h1>
-                <p className="max-w-2xl text-sm leading-6 text-zinc-400/90">
-                  A dark realtime control room for OpenAI voice sessions and local Codex threads. The voice lane is live today,
-                  and the Codex lane stays intact for the next step: wiring spoken intent into local coding workflows.
-                </p>
+      <div className={`flex flex-col gap-4 ${paneOnlyMode ? "w-full px-3 py-3 sm:px-4 lg:px-5" : "mx-auto max-w-[1180px] px-3 py-4 sm:px-5 lg:px-6"}`}>
+        {!paneOnlyMode ? (
+          <Card className="overflow-hidden border-white/8 bg-[#1b221f]/96 shadow-xl shadow-black/20">
+            <CardContent className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="max-w-3xl space-y-3">
+                <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-zinc-300">
+                  Shack15 Hackathon Build
+                </Badge>
+                <div className="space-y-1.5">
+                  <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl lg:text-[2.1rem]">
+                    Voice Codex
+                  </h1>
+                  <p className="max-w-2xl text-sm leading-6 text-zinc-400/90">
+                    A dark realtime control room for OpenAI voice sessions and local Codex threads. The voice lane is live today,
+                    and the Codex lane stays intact for the next step: wiring spoken intent into local coding workflows.
+                  </p>
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <div className="space-y-4">
           <div className="grid items-stretch gap-4 md:grid-cols-2">
@@ -1580,11 +1604,13 @@ export default function App() {
             </PanelShell>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-            <EventPanel events={agentEvents} />
-            <RealtimeLogPanel entries={realtimeLogs} />
-            <JsonRpcLogPanel entries={log} />
-          </div>
+          {!paneOnlyMode ? (
+            <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+              <EventPanel events={agentEvents} />
+              <RealtimeLogPanel entries={realtimeLogs} />
+              <JsonRpcLogPanel entries={log} />
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
