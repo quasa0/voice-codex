@@ -22,7 +22,3 @@ VoiceCodex was designed and implemented before OpenAI later unveiled a [function
 - **JetBrains plugin shell** hosts the web app inside WebStorm and can open files, show diffs, and control IDE state.
 - **Structured orchestration** keeps normal conversation, active coding tasks, steering, and interruptions separate.
 - **pnpm** is used for local development: `pnpm install`, `pnpm dev`, and `pnpm build`.
-
-## License
-
-MIT
