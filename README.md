@@ -2,6 +2,8 @@
 
 VoiceCodex is a JetBrains plugin running inside WebStorm that turns the IDE into a hands-free conversational coding partner. You just talk naturally, keep your hands off the keyboard, and watch Codex do the work inside your IDE.
 
+<img width="1624" height="1284" alt="VoiceCodex command center" src="https://github.com/user-attachments/assets/c0e5c69a-b523-44af-93f5-d73a66d25cdc" />
+
 ## Why
 
 Coding with an agent still usually means staying glued to the keyboard: typing prompts, watching logs, copying context, and checking what changed. VoiceCodex makes Codex feel like a teammate inside the IDE. You can talk naturally, ask side questions while work is running, and see the actual file changes appear in WebStorm.
@@ -20,4 +22,3 @@ VoiceCodex was designed around side questions that do not interrupt the main exe
 - **JetBrains plugin shell** hosts the web app inside WebStorm and can open files, show diffs, and control IDE state.
 - **Structured orchestration** keeps normal conversation, active coding tasks, steering, and interruptions separate.
 - **pnpm** is used for local development: `pnpm install`, `pnpm dev`, and `pnpm build`.
-
